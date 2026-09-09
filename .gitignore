@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime artifacts (regenerated / noisy)
+data/server_autostart.log
+*.tmp
+.DS_Store
+
+# Local-only notes
+.claude/
