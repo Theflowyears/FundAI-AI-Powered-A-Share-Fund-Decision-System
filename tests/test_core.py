@@ -337,6 +337,31 @@ class NewsCleanTest(unittest.TestCase):
         self.assertEqual(n3, 1)
         scr.close()
 
+    def test_ingest_fuzzy_cross_source_dup_skipped(self):
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        base = "央行开展五千亿元规模的逆回购操作以维护银行体系流动性合理充裕"  # len>=28
+        variant = "央行开展五千亿元规模的逆回购操作以维护银行体系流动性宽松充裕"  # 同事件换字
+        other = "卫星互联网龙头公司斩获批量订单产业链迎来放量期"  # 不同主题
+        mk = lambda i, t: {"id": i, "title": t, "text": t,
+                           "auto_label": "bull", "auto_strength": 1,
+                           "source": "s", "time": "10:00"}
+        scr.ingest_feed("2026-09-08", [mk("a", base)], skip_recent=True)
+        n = scr.ingest_feed("2026-09-09",
+                            [mk("b", variant), mk("c", other)],
+                            skip_recent=True)
+        # 换一字的转帖被模糊去重 → 只新增不同主题那条
+        self.assertEqual(n, 1)
+        self.assertEqual(len(scr.items_for("2026-09-09")), 1)
+        self.assertEqual(scr.items_for("2026-09-09")[0]["item_id"], "c")
+        scr.close()
+
+    def test_fuzzy_not_merge_distinct_topic(self):
+        from fundai import screening
+        a = "央行开展五千亿元规模的逆回购操作以维护银行体系流动性合理充裕"
+        b = "卫星互联网龙头公司斩获批量订单产业链迎来放量期"
+        self.assertFalse(screening.ScreeningStore._fuzzy_dup([a], b, 0.93))
+
     def test_news_score_cap(self):
         from fundai.engine import combine_score
         cfg = settings.load_config()

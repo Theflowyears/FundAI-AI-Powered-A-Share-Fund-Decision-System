@@ -111,30 +111,62 @@ class ScreeningStore:
             (lo,)).fetchall()
         return {norm_title(r["title"]) for r in rows if norm_title(r["title"])}
 
+    @staticmethod
+    def _fuzzy_dup(keys, key, ratio=0.93):
+        """归一化标题模糊重复判定（仅用于“长标题”的近重复转帖/滚动）。
+
+        不同公司/不同ETF的模板化快讯虽共享大量句式，相似度通常在 0.85 以下；
+        同事件换一两个字的长标题相似度在 0.95 上下——取 ≥0.93 & ≥28 字作为安全区。
+        """
+        if len(key) < 28:
+            return False
+        import difflib
+        for t in keys:
+            if not t or t == key or len(t) < 28:
+                continue
+            if abs(len(t) - len(key)) > 4:
+                continue
+            if difflib.SequenceMatcher(None, t, key).ratio() >= ratio:
+                return True
+        return False
+
     def ingest_feed(self, date_s, feed, keep_user=True, skip_recent=True):
         """把当天全量消息写入（自动字段覆盖；用户已打标字段保留）。返回写入条数。
 
-        skip_recent=True：先做打标前清洗——近 RECENT_TITLE_DAYS 天已入库的同标题
-        （滚动播报换时戳 / 跨日重播同一快讯）直接跳过，避免用户打标时看到重复消息。
+        skip_recent=True：先做打标前清洗——
+        1) 近 RECENT_TITLE_DAYS 天已入库的相同(归一化)标题直接跳过
+           （滚动换时戳 / 跨日重播 / 跨源同文转帖）；
+        2) 长标题与近期标题模糊相似(≥0.94)的跨源转帖/滚动重复也跳过；
+        两种跳过均不影响“同一 item_id 的 force 刷新”。
         """
         if not feed:
             return 0
         n = 0
         recent_keys = None
+        recent_list = []
         if skip_recent:
             recent_keys = self.recent_title_keys(date_s) if date_s else set()
+            asof = date_s or util.today_str()
+            lo = util.add_days(asof, -(RECENT_TITLE_DAYS - 1))
+            rows = self.conn.execute(
+                "SELECT title FROM items WHERE date>=? AND title!=''",
+                (lo,)).fetchall()
+            recent_list = [norm_title(r["title"]) for r in rows]
         with self.lock:
             for it in feed:
                 item_id = it.get("id") or ""
                 key = norm_title(it.get("title") or "")
-                if skip_recent and key and key in recent_keys:
-                    # 同一归一化标题近期已入库：仅当“同一 item_id 刷新”才放行
-                    # （保持 force 重拉时自动标签可刷新），否则视为滚动/重播重复跳过
-                    same_id = self.conn.execute(
+                if skip_recent:
+                    same_id = bool(item_id) and self.conn.execute(
                         "SELECT 1 FROM items WHERE date=? AND item_id=?",
                         (date_s, item_id)).fetchone()
-                    if not same_id:
-                        continue
+                    exact_dup = bool(key) and key in recent_keys
+                    if exact_dup and not same_id:
+                        continue  # 同标题近期已入库（且不是本条目刷新）→ 重复跳过
+                    if not (exact_dup and same_id):
+                        # 模糊重复：跨源转帖/滚动重播（同一 item_id 刷新除外）
+                        if key and self._fuzzy_dup(recent_list, key):
+                            continue
                 if keep_user:
                     old = self.conn.execute(
                         "SELECT user_label,user_strength,rated_at FROM items "
