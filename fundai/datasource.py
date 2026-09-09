@@ -331,11 +331,14 @@ class Market:
             seq = [x for x in seq if x[0] >= need_from]
         return seq
 
-    def fund_history(self, code, need_from=None, allow_online=True):
+    def fund_history(self, code, need_from=None, allow_online=True,
+                     force_live=False):
         """升序 [(date, nav)]。按 data.provider 选择通道链，全部失败才用缓存。
 
         allow_online=False：只读磁盘缓存（回测/回放用），绝不触发在线请求，
         历史窗口够用即返回，避免回放烧配额（audit P1-9/P0-3）。
+        force_live=True：显式“立即在线刷新”（用于持仓盈亏手动刷新）——忽略内存
+        TTL 与磁盘新鲜判断，直接走在线通道；在线失败才回退本地缓存。
         """
         if not re.match(r"^\d{6}$", str(code)):
             raise DataError("基金代码格式错误: {}".format(code))
@@ -352,6 +355,33 @@ class Market:
                 seq = [x for x in seq if x[0] >= need_from]
             return seq
 
+        if force_live:
+            last_err = None
+            for prov in self._nav_chain():
+                try:
+                    if prov == "akshare":
+                        got = self._ak_nav_items(code)
+                    elif prov == "zhitu":
+                        got = {d: n for d, n in self._zt_fund_navs(code)}
+                    else:  # eastmoney
+                        got = {d: n for d, n in self._em_fund_history(
+                            code, need_from=need)}
+                    if got:
+                        items.update(got)
+                        util.save_json(self._nav_cache_path(code),
+                                       {"updated": util.now_iso(),
+                                        "items": items})
+                        self._fresh_ts[code] = time.time()
+                        return _serve()
+                except DataError as e:
+                    last_err = e
+                    self.warnings.append("净值通道 {} 失败({})：{}".format(
+                        prov, code, e))
+            if cache_ok:
+                self.warnings.append("{} 在线刷新失败，使用本地缓存".format(code))
+                return _serve()
+            raise DataError("基金 {} 在线刷新失败且无缓存：{}".format(
+                code, last_err or "所有通道失败"))
         if not allow_online:
             if cache_ok:
                 return _serve()
@@ -385,8 +415,8 @@ class Market:
             return _serve()
         raise DataError("基金 {} 净值获取失败且无缓存：{}".format(code, last_err or "所有通道失败"))
 
-    def fund_latest(self, code):
-        seq = self.fund_history(code)
+    def fund_latest(self, code, force_live=False):
+        seq = self.fund_history(code, force_live=force_live)
         return seq[-1] if seq else (None, None)
 
     def fund_name(self, code):

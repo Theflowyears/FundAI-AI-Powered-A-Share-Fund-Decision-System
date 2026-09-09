@@ -73,7 +73,11 @@
     </div>
 
     <div class="panel">
-      <h3>💰 当前持仓盈亏 <span class="mut small">（成本 vs 市值 · 红盈绿亏）</span></h3>
+      <h3 style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">💰 当前持仓盈亏
+        <span class="mut small" style="font-weight:normal">（成本 vs 市值 · 红盈绿亏）</span>
+        <span class="spacer"></span>
+        <button id="btnRefreshPos" class="btn small" title="立即在线重取持仓基金的最新净值（绕过 60s 轮询/75s 快照缓存），用于尽快核对收益">↻ 刷新持仓净值</button>
+      </h3>
       <div class="pnl-cards" id="pnlSummary"></div>
       <div id="pnlTable"></div>
     </div>

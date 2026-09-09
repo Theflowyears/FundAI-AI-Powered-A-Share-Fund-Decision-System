@@ -392,6 +392,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(res)
             finally:
                 app._busy.release()
+        elif path == "/api/positions/refresh":
+            # “持仓盈亏”独立刷新：强制在线取持仓基金最新净值（绕过 75s 状态快照）
+            if app.demo:
+                return self._err("演示库只读，持仓为合成数据无需刷新")
+            if not app._busy.acquire(blocking=False):
+                return self._err("正在刷新，请稍候", 409)
+            try:
+                res = app.engine.refresh_positions()
+                app._invalidate()
+                return self._json(res)
+            except Exception as e:
+                return self._err("持仓刷新失败：" + str(e))
+            finally:
+                app._busy.release()
         elif path == "/api/backtest":
             if not app._busy.acquire(blocking=False):
                 return self._err("上一次任务仍在运行，请稍候", 409)

@@ -214,6 +214,36 @@ function renderPnL() {
   }).join("") + `</tbody></table>`;
 }
 
+/* 持仓盈亏独立刷新：绕过 60s 轮询 / 服务端 75s 状态快照，
+   立即在线重取持仓基金最新净值并局部重渲染（尽快核对收益） */
+let _refreshingPos = false;
+$("btnRefreshPos").onclick = async () => {
+  if (_refreshingPos) return;
+  _refreshingPos = true;
+  const btn = $("btnRefreshPos");
+  btn.disabled = true;
+  const oldTxt = btn.textContent;
+  btn.textContent = "刷新中…";
+  try {
+    const r = await api("/api/positions/refresh", { method: "POST", body: {} });
+    if (!r.ok) throw new Error(r.message || "刷新失败");
+    if (ST) {
+      ST.positions = r.positions || [];
+      ST.cash = r.cash; ST.mv_eq = r.mv_eq; ST.mv_bond = r.mv_bond;
+      ST.total = r.total; ST.fees = r.fees;
+    }
+    renderPnL();
+    if (ST) renderDash();
+    const navDates = [...new Set(Object.values(r.nav_dates || {}).filter(Boolean))];
+    const staleN = (r.stale || []).length;
+    toast("持仓净值已刷新：" + (r.positions || []).length + " 只持仓" +
+      (navDates.length ? "（净值日 " + navDates.join("/") + "）" : "") +
+      (staleN ? "；" + staleN + " 只暂无最新净值（取到的是缓存）" : ""),
+      staleN ? "err" : "ok");
+  } catch (e) { toast("持仓刷新失败：" + e.message, "err"); }
+  finally { _refreshingPos = false; btn.disabled = false; btn.textContent = oldTxt; }
+};
+
 function viewChip(keyOrTitle, score) {
   let key = String(keyOrTitle || "");
   if (!["hot_bull", "bull", "neutral", "bear", "hot_bear"].includes(key)) {
