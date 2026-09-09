@@ -44,6 +44,7 @@ DEFAULT_CFG = {
         "min_hold_days": 7, "max_bond_weight": 0.35,
         "mom_window": 20, "rotate_gap": 0.05, "min_order_yuan": 10.0,
         "news_weight": 0.35, "news_amp": 8,
+        "news_score_cap": 25,
         "score_ema_enabled": False, "score_ema_alpha": 0.4,
         "top_n": 3, "theme_max": 1, "momentum_weight": 0.8,
         "min_momentum": 0.0, "relative_momentum": False,

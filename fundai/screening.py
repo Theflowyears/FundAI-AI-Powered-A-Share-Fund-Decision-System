@@ -40,6 +40,15 @@ SEARCH_LAST_FILE = util.data_file("search_last_merge.json")
 
 LABEL_RE = re.compile(r"[\u4e00-\u9fa5]+")
 
+# 打标前的“清洗层”配置
+RECENT_TITLE_DAYS = 7   # 该窗口内出现过相同(归一化)标题 → 视为重复滚动/跨日重播，不再重复入库
+_NORM_RE = re.compile(r"[^\u4e00-\u9fa5A-Za-z0-9]+")
+
+
+def norm_title(title):
+    """标题归一化：去标点/空白/大小写，用于跨日/滚动去重。"""
+    return _NORM_RE.sub("", str(title or "")).lower()
+
 
 class ScreeningStore:
     def __init__(self, db_path=None):
@@ -93,18 +102,44 @@ class ScreeningStore:
             """)
 
     # ---------------- 消息入库 / 查询 ----------------
-    def ingest_feed(self, date_s, feed, keep_user=True):
-        """把当天全量消息写入（自动字段覆盖；用户已打标字段保留）。返回写入条数。"""
+    def recent_title_keys(self, asof_date_s=None, days=RECENT_TITLE_DAYS):
+        """近 days 天（含当日）已入库标题的归一化键集合，用于打标前清洗去重。"""
+        asof_date_s = asof_date_s or util.today_str()
+        lo = util.add_days(asof_date_s, -(days - 1))
+        rows = self.conn.execute(
+            "SELECT title FROM items WHERE date>=? AND title!=''",
+            (lo,)).fetchall()
+        return {norm_title(r["title"]) for r in rows if norm_title(r["title"])}
+
+    def ingest_feed(self, date_s, feed, keep_user=True, skip_recent=True):
+        """把当天全量消息写入（自动字段覆盖；用户已打标字段保留）。返回写入条数。
+
+        skip_recent=True：先做打标前清洗——近 RECENT_TITLE_DAYS 天已入库的同标题
+        （滚动播报换时戳 / 跨日重播同一快讯）直接跳过，避免用户打标时看到重复消息。
+        """
         if not feed:
             return 0
         n = 0
+        recent_keys = None
+        if skip_recent:
+            recent_keys = self.recent_title_keys(date_s) if date_s else set()
         with self.lock:
             for it in feed:
+                item_id = it.get("id") or ""
+                key = norm_title(it.get("title") or "")
+                if skip_recent and key and key in recent_keys:
+                    # 同一归一化标题近期已入库：仅当“同一 item_id 刷新”才放行
+                    # （保持 force 重拉时自动标签可刷新），否则视为滚动/重播重复跳过
+                    same_id = self.conn.execute(
+                        "SELECT 1 FROM items WHERE date=? AND item_id=?",
+                        (date_s, item_id)).fetchone()
+                    if not same_id:
+                        continue
                 if keep_user:
                     old = self.conn.execute(
                         "SELECT user_label,user_strength,rated_at FROM items "
                         "WHERE date=? AND item_id=?",
-                        (date_s, it.get("id") or "")).fetchone()
+                        (date_s, item_id)).fetchone()
                 else:
                     old = None
                 user_label = (dict(old).get("user_label") if old else "") or ""
@@ -121,13 +156,15 @@ class ScreeningStore:
                         "funds=excluded.funds,auto_label=excluded.auto_label,"
                         "auto_strength=excluded.auto_strength,user_label=excluded.user_label,"
                         "user_strength=excluded.user_strength,rated_at=excluded.rated_at",
-                        (date_s, it.get("id") or "", it.get("source") or "",
+                        (date_s, item_id, it.get("source") or "",
                          it.get("time") or "", it.get("title") or "",
                          it.get("text") or "", it.get("url") or "",
                          json.dumps(it.get("sectors") or [], ensure_ascii=False),
                          json.dumps(it.get("funds") or [], ensure_ascii=False),
                          it.get("auto_label") or "", float(it.get("auto_strength") or 0),
                          user_label, user_strength, rated_at))
+                if recent_keys is not None and key:
+                    recent_keys.add(key)
                 n += 1
         return n
 
@@ -212,6 +249,10 @@ class ScreeningStore:
             words = set(lexicon.token_candidates(txt))
             for w in words:
                 if lexicon.is_base_word(w):
+                    continue
+                if not lexicon.termness(w):
+                    # 术语化学习：与常见金融术语无关的 n-gram 碎片不学，
+                    # 避免把“断词奇怪”的非行情词当成词典进化
                     continue
                 c = counts.setdefault(w, [0, 0, 0, 0])
                 if c[3] == 0:  # docs 计数按该词首次出现
