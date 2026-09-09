@@ -12,7 +12,7 @@
 import hashlib
 import re
 
-from . import lexicon, screening, settings, strategy, util
+from . import lexicon, screening, semantics, settings, strategy, util
 from .util import DataError
 
 EM_NEWS = ("https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
@@ -148,12 +148,22 @@ def fetch_news(amplitude=8, cfg=None, pool=None):
     screened_out = 0
     for it in items:
         txt = (it.get("title") or "") + " " + (it.get("text") or "")
-        sc = lexicon.score_text(txt, extra=extra)
         themes = _theme_links(txt)
-        # 相关性预筛：无市场名词/硬宏观词、未命中任何板块主题、且零情绪 → 无关噪音
-        if not sc.get("relevance") and not themes and sc.get("strength") == 0:
-            screened_out += 1
-            continue
+        sc = lexicon.score_text(txt, extra=extra)
+        # 事件语义推断优先（回答“这条消息意味着什么”），词典作兜底
+        sem = semantics.infer_news(it.get("title") or "", it.get("text") or "",
+                                   dict_score=sc)
+        ev = sem.get("event") or "none"
+        if ev == "none":
+            # 相关性预筛：无市场名词/硬宏观词、未命中任何板块主题、且零情绪 → 无关噪音
+            if not sc.get("relevance") and not themes and sc.get("strength") == 0:
+                screened_out += 1
+                continue
+            label, strength = sc["label"], sc["strength"]
+            reason = sem.get("reason") or ""
+        else:
+            label, strength = sem["label"], sem["strength"]
+            reason = sem.get("reason") or ""
         entry = {
             "id": _item_id(it),
             "source": it.get("source", ""),
@@ -161,9 +171,11 @@ def fetch_news(amplitude=8, cfg=None, pool=None):
             "title": (it.get("title") or "").strip(),
             "text": (it.get("text") or "").strip(),
             "url": "",
-            "auto_label": sc["label"],
-            "auto_strength": sc["strength"],
-            "auto_net": sc["net"],
+            "auto_label": label,
+            "auto_strength": strength,
+            "auto_net": int(strength) if ev != "none" else sc.get("net", 0),
+            "event_type": ev if ev != "none" else "dict",
+            "auto_reason": reason,
             "sectors": themes,
             "funds": _fund_links(themes, pool_list),
             "user_label": "",

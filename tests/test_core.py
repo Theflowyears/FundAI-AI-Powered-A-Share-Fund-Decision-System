@@ -387,5 +387,91 @@ class NewsCleanTest(unittest.TestCase):
         self.assertEqual(combine_score(cfg, 0, -100), -9)
 
 
+class SemanticsTest(unittest.TestCase):
+    def _ev(self, title, text=""):
+        from fundai import semantics
+        return semantics.classify_event(title, text)
+
+    def test_cbank_cut_infers_bull(self):
+        ev = self._ev("央行宣布全面降准0.5个百分点", "释放长期资金约一万亿元")
+        self.assertEqual(ev["event"], "cbank_ease")
+        self.assertEqual(ev["scope"], "market")
+        self.assertEqual(ev["label"], "bull")
+        self.assertGreaterEqual(ev["strength"], 3)
+        self.assertIn("流动性", ev["reason"])
+
+    def test_geo_conflict_infers_bear(self):
+        ev = self._ev("中东冲突加剧 局势再度升级", "双方交火规模扩大")
+        self.assertEqual(ev["event"], "geo_conflict")
+        self.assertEqual(ev["label"], "bear")
+        self.assertEqual(ev["scope"], "market")
+
+    def test_earnings_beat_infers_bull_single(self):
+        ev = self._ev("某公司中报预增 净利润同比增长一倍", "业绩超预期")
+        self.assertEqual(ev["event"], "earnings")
+        self.assertEqual(ev["scope"], "single")
+        self.assertEqual(ev["label"], "bull")
+
+    def test_etf_premium_warning_neutral(self):
+        ev = self._ev(
+            "沪深300ETF盘中临时停牌：二级市场交易价格明显高于基金份额参考净值",
+            "出现较大幅度溢价，未有效回落，本基金提示溢价风险")
+        self.assertEqual(ev["event"], "fund_premium_warning")
+        self.assertEqual(ev["label"], "neutral")
+        self.assertEqual(ev["strength"], 0)
+        self.assertIn("产品", ev["reason"])
+
+    def test_holder_reduction_infers_bear_single(self):
+        ev = self._ev("某控股股东披露减持计划", "拟减持不超过2%股份")
+        self.assertEqual(ev["event"], "holder_flow")
+        self.assertEqual(ev["label"], "bear")
+        self.assertEqual(ev["scope"], "single")
+
+    def test_reapply_auto_updates_legacy_rows(self):
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        feed = [{"id": "p1", "title": "沪深300ETF盘中临时停牌：二级市场交易价格高于份额参考净值",
+                 "text": "溢价风险提示", "auto_label": "bear", "auto_strength": -1,
+                 "auto_net": 0, "event_type": "", "auto_reason": "",
+                 "source": "x", "time": "10:00"}]
+        scr.ingest_feed("2026-09-09", feed, skip_recent=False)
+        # 先把该行写成旧的“误判 bear”状态，再重算
+        with scr.conn:
+            scr.conn.execute(
+                "UPDATE items SET auto_label='bear', auto_strength=-1, "
+                "event_type='', auto_reason='' WHERE item_id='p1'")
+        n = scr.reapply_auto("2026-09-09")
+        self.assertEqual(n, 1)
+        row = scr.items_for("2026-09-09")[0]
+        self.assertEqual(row["auto_label"], "neutral")
+        self.assertEqual(row["event_type"], "fund_premium_warning")
+        self.assertTrue(row["auto_reason"])
+        scr.close()
+
+    def test_learn_skips_premium_template_rows(self):
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        feed = [
+            {"id": "a", "title": "沪深300ETF溢价提示：二级市场交易价格高于参考净值",
+             "text": "盘中临时停牌 溢价风险", "auto_label": "bear",
+             "auto_strength": -1, "auto_net": -1,
+             "event_type": "fund_premium_warning", "auto_reason": "产品",
+             "source": "x", "time": "10:00"},
+            {"id": "b", "title": "沪深300ETF溢价提示：基金份额参考净值低于市价",
+             "text": "盘中临时停牌", "auto_label": "bear", "auto_strength": -1,
+             "auto_net": -1, "event_type": "fund_premium_warning",
+             "auto_reason": "产品", "source": "x", "time": "10:01"},
+        ]
+        scr.ingest_feed("2026-09-09", feed, skip_recent=False)
+        with scr.conn:
+            scr.conn.execute("UPDATE items SET user_label='bear',"
+                             "user_strength=-1 WHERE item_id IN ('a','b')")
+        scr.learn_all()
+        learned = {w["word"] for w in scr.lexicon_rows(1000)}
+        # 产品风险提示模板的行不参与学习：其高频词不应变成“利空词”
+        self.assertFalse(learned & {"停牌", "溢价", "参考净值"})
+        scr.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

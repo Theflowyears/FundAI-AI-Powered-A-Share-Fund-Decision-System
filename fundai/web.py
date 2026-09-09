@@ -68,13 +68,15 @@ class ApiApp:
         for f in self.engine._pool_items():
             nmap[f["code"]] = f.get("name") or f["code"]
         items = scr.items_for(date_s)  # 时间倒序
-        # 分流（打标前一轮筛选）：见 screening.review_split——
-        #   to_review   = AI 无法确定方向(中性)且未打标 → 人工额度（最多 50）
-        #   ai_accepted = AI 方向明确(利好/利空)且未打标 → 直接采用 AI，不占额度
+        # ETF 场内溢价/临停等“产品层面风险提示”：AI 判中性、不进人工额度（也无需人工）；
+        # 已人工打标的照常按“已打标”处理
+        premium = [r for r in items if not r.get("user_label") and
+                   r.get("event_type") == "fund_premium_warning"]
+        rest = [r for r in items if r not in premium]
         review_head, neutral_extra, ai_head, done = \
-            screening.ScreeningStore.review_split(items, MAX_REVIEW_QUEUE)
+            screening.ScreeningStore.review_split(rest, MAX_REVIEW_QUEUE)
         todo_ids = {r["item_id"] for r in review_head}
-        ordered = review_head + neutral_extra + ai_head + done
+        ordered = review_head + premium + neutral_extra + ai_head + done
         feed = []
         for r in ordered:
             d = dict(r)
@@ -83,8 +85,10 @@ class ApiApp:
             d["id"] = d.get("item_id") or d.get("id") or ""
             d["needs_review"] = not d.get("user_label") and \
                 d.get("item_id") in todo_ids
+            d["auto_handled"] = not d.get("user_label") and \
+                d.get("event_type") == "fund_premium_warning"
             d["ai_decided"] = not d.get("user_label") and \
-                d.get("item_id") not in todo_ids and \
+                not d["needs_review"] and not d["auto_handled"] and \
                 (d.get("auto_label") or "neutral") != "neutral"
             d["funds_links"] = [{"code": c, "name": nmap.get(c, c)}
                                 for c in (d.get("funds") or [])]
