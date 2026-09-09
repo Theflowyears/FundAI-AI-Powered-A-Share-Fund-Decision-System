@@ -579,6 +579,10 @@ class Engine:
                     continue
                 ledger.complete_order(o["id"], V, nav, shares, res["debit"], fee,
                                       "T+1 自动确认：{} 净值成交，{} 份额确认".format(V, C))
+                fills.append({"status": "filled", "id": o["id"], "action": "buy",
+                              "code": code, "date": V, "shares": shares,
+                              "amount": res["debit"], "fee": util.r2(fee),
+                              "nav": nav, "confirm_date": C})
             else:  # sell
                 allow_early = bool(self.risk_cfg.get("allow_early_exit_fee", False))
                 note_txt = o.get("note") or ""
@@ -600,8 +604,11 @@ class Engine:
                 ledger.complete_order(o["id"], V, nav, res["executed"], res["net"],
                                       res["fee"],
                                       "T+1 自动确认：{} 净值成交，{} 资金到账".format(V, C))
-            fills.append({"status": "filled", "id": o["id"], "action": o["action"],
-                          "code": code, "date": V})
+                fills.append({"status": "filled", "id": o["id"], "action": "sell",
+                              "code": code, "date": V,
+                              "shares": res["executed"],
+                              "amount": res["net"], "fee": res["fee"],
+                              "nav": nav, "confirm_date": C})
         return fills
 
     def _fill_order(self, o, fill_date, nav, ledger=None):
