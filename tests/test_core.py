@@ -473,5 +473,57 @@ class SemanticsTest(unittest.TestCase):
         scr.close()
 
 
+class SignalCalibTest(unittest.TestCase):
+    def test_evaluate_next_day_hits(self):
+        from fundai import calib
+        dates = ["2026-09-07", "2026-09-08", "2026-09-09"]
+        closes = {"2026-09-07": 100.0, "2026-09-08": 103.0,
+                  "2026-09-09": 99.0}
+        rows = [
+            {"date": "2026-09-07", "auto_label": "bull",
+             "event_type": "cbank_ease", "scope": "market", "source": "x",
+             "time": "09:00"},
+            {"date": "2026-09-08", "auto_label": "bear",
+             "event_type": "geo_conflict", "scope": "market", "source": "x",
+             "time": "10:00"},
+            {"date": "2026-09-08", "auto_label": "neutral",
+             "event_type": "fund_premium_warning", "scope": "single",
+             "source": "x", "time": "10:01"},
+        ]
+        out, agg = calib.evaluate(rows, closes, dates)
+        # 09-07 bull → 09-08 +3% 命中；09-08 bear → 09-09 -3.9% 命中；
+        # 09-08 neutral → 09-09 波动大 → 不命中
+        by = {(r["date"], r["event_type"]): r for r in out}
+        self.assertEqual(by[("2026-09-07", "cbank_ease")]["hit"], 1)
+        self.assertEqual(by[("2026-09-08", "geo_conflict")]["hit"], 1)
+        self.assertEqual(
+            by[("2026-09-08", "fund_premium_warning")]["hit"], 0)
+        self.assertEqual(agg["cbank_ease"]["hit_rate"], 1.0)
+        self.assertEqual(agg["geo_conflict"]["hit_rate"], 1.0)
+
+    def test_cls_export_rows(self):
+        import tempfile
+        from pathlib import Path
+        from fundai import calib
+        rows = [
+            {"time": "2026-09-09 10:00", "title": "央行降准0.5个百分点",
+             "text": "释放长期资金"},
+            {"time": "2026-09-09 10:01", "title": "某中东国家冲突加剧",
+             "text": "局势升级 地缘风险升温"},
+        ]
+        p = Path(tempfile.gettempdir()) / "_cls_probe.json"
+        p.write_text(__import__("json").dumps(rows), encoding="utf-8")
+        try:
+            feed = calib.cls_export_rows(str(p))
+        finally:
+            p.unlink(missing_ok=True)
+        self.assertEqual(len(feed), 2)
+        labels = {f["title"]: f["auto_label"] for f in feed}
+        self.assertEqual(labels["央行降准0.5个百分点"], "bull")
+        self.assertEqual(labels["某中东国家冲突加剧"], "bear")
+        self.assertEqual(feed[0]["source"], "财联社电报(手动导入)")
+        self.assertTrue(all(f["event_type"] for f in feed))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

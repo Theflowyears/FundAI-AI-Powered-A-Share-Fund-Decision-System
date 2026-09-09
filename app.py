@@ -250,6 +250,47 @@ def cmd_oos(args):
     return 0
 
 
+def cmd_signals_update(args):
+    """把近期已入库消息结算成“消息→下一交易日涨跌”样本（幂等）。"""
+    from fundai import calib, screening, util
+    scr = screening.ScreeningStore()
+    closes, dates = calib.load_closes()
+    lo = util.add_days(util.today_str(), -(max(3, int(args.days)) * 2))
+    ds_list = [r[0] for r in scr.conn.execute(
+        "SELECT DISTINCT date FROM items WHERE date>=?", (lo,))]
+    total = 0
+    for ds in ds_list:
+        total += calib.update_samples(scr.items_for(ds), closes, dates)
+    rep = calib.report()
+    jprint({"updated": total, "settled_total": rep["total"],
+            "by_event": rep["by_event"]})
+    print("提示：样本按交易日逐日积累（含下一交易日涨跌才结算），"
+          "财联社电报历史无法自动回溯；可每天收盘后运行一次本命令。")
+    return 0
+
+
+def cmd_signals_report(args):
+    """输出 事件类型 × 命中率 校准报告。"""
+    from fundai import calib
+    jprint(calib.report())
+    return 0
+
+
+def cmd_cls_import(args):
+    """把财联社手动导出的电报文件(json/jsonl)并入某日消息库（源=财联社电报·手动导入）。"""
+    from fundai import calib, screening
+    date_s = str(args.date or util.today_str())[:10]
+    feed = calib.cls_export_rows(args.file)
+    if not feed:
+        print("文件无有效行（需 [{time,title,text},...] 或 JSONL）")
+        return 1
+    scr = screening.ScreeningStore()
+    n = scr.ingest_feed(date_s, feed, skip_recent=True)
+    print("已并入 {} 条（去重后新增 {}）到 {}；随后运行 python app.py signals-update 参与样本结算".format(
+        len(feed), n, date_s))
+    return 0
+
+
 def cmd_fetch_history(args):
     """把主基准指数历史K线一次性延伸至 --years 年并写本地缓存（智兔/东财，
     约各 1 次全区间请求）。为长周期回测/历史语境准备数据（等价于 BaoStock
@@ -357,6 +398,20 @@ def main():
     fh.add_argument("--bench", action="store_true",
                     help="同时抓取页面大盘指数条的长期K线（东财）")
     fh.set_defaults(fn=cmd_fetch_history)
+
+    su = sub.add_parser("signals-update",
+                        help="把已入库消息结算成 消息→下一交易日涨跌 样本（幂等）")
+    su.add_argument("--days", type=int, default=7)
+    su.set_defaults(fn=cmd_signals_update)
+
+    sr = sub.add_parser("signals-report", help="输出 事件类型×命中率 校准报告")
+    sr.set_defaults(fn=cmd_signals_report)
+
+    ci = sub.add_parser("cls-import",
+                        help="导入财联社手动导出的电报 json/jsonl 到指定日期消息库")
+    ci.add_argument("--file", required=True)
+    ci.add_argument("--date", default=None)
+    ci.set_defaults(fn=cmd_cls_import)
 
     args = p.parse_args()
     if not args.cmd:
