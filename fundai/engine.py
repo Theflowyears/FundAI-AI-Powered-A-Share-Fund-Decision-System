@@ -406,14 +406,21 @@ class Engine:
                     "pnl_pct": (round(pnl, 6) if pnl is not None else None),
                     "sellable_mv": sellv, "locked_mv": lockv,
                 }
-        committed = sum(o["amount"] for o in (ledger.pending_orders()
-                                              + ledger.submitted_orders())
-                        if o["action"] == "buy")
+        pend_all = ledger.pending_orders() + ledger.submitted_orders()
+        committed = sum(o["amount"] for o in pend_all if o["action"] == "buy")
+        # 未执行/已提交订单的方向集合：plan 与下单去重时排除“反向挂单”的基金，
+        # 避免 昨日卖A未执行 + 今日A重进winners 时同日出现 买A/卖A 互相矛盾的指令。
+        pending_buy_codes = {o["fund_code"] for o in pend_all
+                             if o["action"] == "buy"}
+        pending_sell_codes = {o["fund_code"] for o in pend_all
+                              if o["action"] == "sell"}
         meta = self.account() if ledger is self.ledger else (ledger.account_meta() or {})
         return {
             "date": date_s,
             "cash": valuation["cash"],
             "committed": committed,
+            "pending_buy_codes": pending_buy_codes,
+            "pending_sell_codes": pending_sell_codes,
             "eq_mv": valuation["mv_eq"],
             "bond_mv": valuation["mv_bond"],
             "total": valuation["total"],
@@ -566,8 +573,11 @@ class Engine:
                 if shares < 0.01:
                     ledger.skip_order(o["id"], "确认后金额过小，无法形成有效份额")
                     continue
-                ledger.exec_buy(code, C, amount, shares, nav, fee)
-                ledger.complete_order(o["id"], V, nav, shares, amount, fee,
+                res = ledger.exec_buy(code, C, shares, nav, fee, budget=amount)
+                if not res["ok"]:
+                    ledger.skip_order(o["id"], res.get("reason") or "买入失败")
+                    continue
+                ledger.complete_order(o["id"], V, nav, shares, res["debit"], fee,
                                       "T+1 自动确认：{} 净值成交，{} 份额确认".format(V, C))
             else:  # sell
                 allow_early = bool(self.risk_cfg.get("allow_early_exit_fee", False))
@@ -607,11 +617,16 @@ class Engine:
             if shares < 0.01:
                 ledger.skip_order(oid, "金额过小，无法形成有效份额")
                 return {"status": "skipped", "id": oid, "why": "金额过小"}
-            ledger.exec_buy(code, fill_date, amount, shares, nav, fee)
-            ledger.complete_order(oid, fill_date, nav, shares, amount,
+            res = ledger.exec_buy(code, fill_date, shares, nav, fee, budget=amount)
+            if not res["ok"]:
+                ledger.skip_order(oid, res.get("reason") or "买入失败")
+                return {"status": "skipped", "id": oid,
+                        "why": res.get("reason") or "买入失败"}
+            ledger.complete_order(oid, fill_date, nav, shares, res["debit"],
                                   fee, "自动成交")
             return {"status": "filled", "id": oid, "action": "buy",
-                    "code": code, "shares": shares, "amount": amount,
+                    "code": code, "shares": shares,
+                    "amount": res["debit"],
                     "fee": util.r2(fee), "date": fill_date}
         risk_cfg = (self.cfg.get("strategy", {}) or {}).get("risk", {}) or {}
         allow_early = bool(risk_cfg.get("allow_early_exit_fee", False))
@@ -639,18 +654,30 @@ class Engine:
                 "amount": res["net"], "fee": res["fee"], "date": fill_date}
 
     def _place_orders(self, date_s, plan, ledger=None):
-        """下达计划订单（含人工模式去重），返回已创建订单。"""
+        """下达计划订单（人工模式去重），返回已创建订单。
+
+        去重升级为双向：同一只基金存在未执行的旧单（无论买卖方向）都不再重复
+        下达，避免跨日反向挂单并存。
+        """
         ledger = ledger or self.ledger
         created = []
         pending = ledger.pending_orders()
         for o in plan.get("orders") or []:
-            dup = [p for p in pending
-                   if p["fund_code"] == o["code"] and p["action"] == o["action"]]
+            dup = [p for p in pending if p["fund_code"] == o["code"]]
             if dup:
-                # 同类建议已存在（可能金额微调），不再重复堆积
-                plan.setdefault("msgs", []).append(
-                    "已有未执行的{}建议（{}），请先执行或跳过，不再重复下达".format(
-                        "申购" if o["action"] == "buy" else "赎回", o["code"]))
+                p = dup[0]
+                same = (p["action"] == o["action"])
+                if same:
+                    plan.setdefault("msgs", []).append(
+                        "已有未执行的{}建议（{}），请先执行或跳过，不再重复下达".format(
+                            "申购" if o["action"] == "buy" else "赎回", o["code"]))
+                else:
+                    plan.setdefault("msgs", []).append(
+                        "基金 {} 已有未执行的{}旧单，方向相反的{}建议不再下达，"
+                        "请先处理旧单（执行/录入成交或放弃）".format(
+                            o["code"],
+                            "申购" if p["action"] == "buy" else "赎回",
+                            "申购" if o["action"] == "buy" else "赎回"))
                 continue
             oid = ledger.add_order(date_s, o["code"], o["action"],
                                    o["amount_yuan"], o["note"])
@@ -704,14 +731,21 @@ class Engine:
         D = dates[-1]
         st = indicators.last_stats(dates, closes, vols)
         msgs_all = []
+        # 0) 先结算到期 T+1 订单（manual 模式）：即使当日已有研判（noop 短路）也要先把
+        #    已提交(submitted)且到确认日的订单按净值入账，避免被 has_record(D) 饿死
+        #    （audit P1-8）。
+        fills = []
+        if exec_mode == "manual":
+            fills = self._auto_confirm(D)
+            if fills:
+                msgs_all.append("已自动确认 {} 笔到期 T+1 订单按净值入账".format(len(fills)))
         if not force and self.ledger.has_record(D):
-            return {"status": "noop", "date": D,
+            return {"status": "noop", "date": D, "fills": fills,
                     "message": "{} 已完成研判（非交易日或今日已运行）。如需重跑：python app.py run-daily --force".format(D)}
-        # 1) 成交历史挂单（仅自动模式；人工模式下由用户在界面录入）
+        # 1) force 重跑：撤销当日 pending
         if force:
             for o in [x for x in self.ledger.pending_orders() if x["order_date"] == D]:
                 self.ledger.skip_order(o["id"], "force 重跑撤销")
-        fills = []
         if exec_mode == "auto":
             for o in self.ledger.pending_orders():
                 if o["order_date"] >= D:
@@ -720,9 +754,6 @@ class Engine:
                 if nav is None:
                     continue  # 该基金今日净值未公布，等下一交易日
                 fills.append(self._fill_order(o, D, nav))
-        else:
-            # manual 半自动：用户点“确认操作”后（submitted），到份额确认日自动按净值确认份额
-            fills = self._auto_confirm(D)
         # 2) 组合估值（按 <=D 的最近净值）
         nav_map = {}
         stale = []
@@ -894,6 +925,13 @@ class Engine:
                 "建议净值公布后重跑（python app.py run-daily --force）。".format(fresh_n, total_n))
         if stale:
             msgs_all.append("净值明细：" + "；".join(stale))
+        # 8.5) 资金守恒断言（尾差/扣款口径修正后的兜底；老库首次运行会自动建立基线）
+        try:
+            chk = self.ledger.check_consistency(raise_on_mismatch=False)
+            if chk.get("problems"):
+                msgs_all.append("【账本一致性异常】" + "；".join(chk["problems"]))
+        except Exception as e:
+            msgs_all.append("【账本一致性检查失败】{}".format(e))
         out = {
             "status": "ok", "date": D, "score": score, "view": title,
             "source": source, "fills": fills, "orders": created,
@@ -1008,78 +1046,186 @@ class Engine:
         return "\n".join(lines)
 
     # ================= 回放（回测 / 演示共用） =================
-    def simulate(self, ledger, dates, index_close, index_vol, nav_series):
+    def _replay_meta(self, codes):
+        """为回放候选代码补齐 名称/种类 元信息（universe + config池 + 动态池兜底）。"""
+        meta = {}
+        bond_seen = set()
+        for f in list(settings.pool_of(self.cfg)) + list(self._pool_items()):
+            c = f.get("code")
+            if not c:
+                continue
+            if c not in meta:
+                meta[c] = {"name": f.get("name") or c, "kind": f.get("kind") or "equity"}
+            if f.get("kind") == "bond":
+                bond_seen.add(c)
+        for u in settings.universe_of(self.cfg):
+            c = u.get("code")
+            if c and c not in meta:
+                meta[c] = {"name": u.get("name") or c,
+                           "kind": "bond" if c in bond_seen else "equity"}
+        # 其余（历史动态池里的代码）：名称兜底
+        names = strategy._theme_of  # noqa（保留引用，避免误删导入）
+        for c in codes:
+            if c not in meta:
+                meta[c] = {"name": c, "kind": "bond" if c in bond_seen else "equity"}
+        return meta
+
+    def _replay_pool_for_day(self, win, meta, eq_all, bond_all, held, top_eq,
+                             theme_max=2):
+        """用“截至当日可见净值”的 20 日动量重建回放池（point-in-time，无前视）。
+
+        规则与 refresh_pool 对齐：按动量降序 + 同主题至多 theme_max 只 + 持仓保护；
+        债基始终保留。返回带 kind/name/mom20 的池列表。
+        """
+        def mom_of(code):
+            w = win.get(code) or []
+            if len(w) >= 22 and w[-22]:
+                return w[-1] / w[-22] - 1.0
+            return None
+
+        rows = [{"code": c, "mom20": mom_of(c)} for c in eq_all
+                if mom_of(c) is not None]
+        rows.sort(key=lambda r: -r["mom20"])
+        chosen, have, theme_count = [], set(), {}
+        for r in rows:
+            if len(chosen) >= top_eq:
+                break
+            th = strategy._theme_of(meta.get(r["code"], {}).get("name", ""))
+            if th and theme_count.get(th, 0) >= theme_max:
+                continue
+            chosen.append(r)
+            have.add(r["code"])
+            theme_count[th] = theme_count.get(th, 0) + 1
+        for r in rows:  # 仍不足 top_eq 时放宽主题限制
+            if len(chosen) >= top_eq:
+                break
+            if r["code"] not in have:
+                chosen.append(r)
+                have.add(r["code"])
+        # 持仓保护（人工回放中可能正持有旧池标的）
+        for code in held:
+            if code in have or meta.get(code, {}).get("kind") == "bond":
+                continue
+            r = next((x for x in rows if x["code"] == code), None)
+            chosen.append(r if r else {"code": code, "mom20": None})
+            have.add(code)
+        # 债基始终保留（防御底仓，不参与动量排名）
+        for code in bond_all:
+            if code not in have:
+                chosen.append({"code": code, "mom20": None})
+                have.add(code)
+        items = []
+        for r in chosen:
+            m = meta.get(r["code"], {})
+            items.append({"code": r["code"], "name": m.get("name") or r["code"],
+                          "kind": m.get("kind") or "equity",
+                          "role": "primary" if m.get("kind") == "bond" else "attack",
+                          "buy_rate": 0.0, "sell_rate_lt7d": 0.015,
+                          "sell_rate_ge7d": 0.0, "min_buy": 10.0,
+                          "mom20": r.get("mom20")})
+        items.sort(key=lambda i: (0 if i["kind"] == "bond" else 1,
+                                  -(i.get("mom20") if i.get("mom20") is not None else -9)))
+        return items
+
+    def simulate(self, ledger, dates, index_close, index_vol, nav_series,
+                 warmup_n=0):
+        """在给定交易日序列上回放同一引擎（回测/演示共用）。
+
+        - 候选池按“当日及之前可见净值”的 20 日动量**逐日重建**（point-in-time），
+          不再用“今天挑好的池”回放历史，消除前视/幸存者偏差（audit P0-3）；
+        - warmup_n>0 时，前 warmup_n 个交易日只“预热”指标/动量，不进入统计行
+          （其产生的持仓作为后续统计的起始状态）。
+        返回 rows 列表（每个元素是一个“统计日”快照）。
+        """
         res = []
         closes = index_close
-        pool_codes = self._pool_codes()
-        eq_codes = self._eq_codes()
-        win = {c: [] for c in eq_codes}
+        univ_codes = sorted((nav_series or {}).keys())
+        meta = self._replay_meta(univ_codes)
+        eq_all = [c for c in univ_codes if meta.get(c, {}).get("kind") != "bond"]
+        bond_all = [c for c in univ_codes if meta.get(c, {}).get("kind") == "bond"]
+        sc = settings.screening_of(self.cfg)
+        top_eq = max(1, int(sc.get("top_equity", 8)))
+        win = {c: [] for c in univ_codes}
         for i, d in enumerate(dates):
-            # 1) 成交挂单
-            for o in list(ledger.pending_orders()):
-                if o["order_date"] >= d:
-                    continue
-                nav = (nav_series.get(o["fund_code"]) or {}).get(d)
-                if nav:
-                    self._fill_order(o, d, nav, ledger=ledger)
-            # 2) 估值与指标
-            nav_map = {}
-            for code in pool_codes:
-                nav = (nav_series.get(code) or {}).get(d)
-                if nav:
-                    nav_map[code] = (d, nav)
-                    if code in win:
-                        win[code].append(nav)
-            st = indicators.last_stats(dates[:i + 1], closes[:i + 1],
-                                       index_vol[:i + 1])
-            val = self._valuation(nav_map, ledger=ledger)
-            score, sigs = analysis.score_market(st)
-            close = st.get("close")
-            chg = st.get("chg_pct")
-            # 3) 决策（回放：无当日消息面，按纯量化评分运行止损止盈等规则）
-            factors = {}
-            mom_map = {}
-            for c in eq_codes:
-                w = win.get(c) or []
-                if len(w) >= 22 and w[-22]:
-                    mom_map[c] = w[-1] / w[-22] - 1.0
-                    rets = [w[i] / w[i - 1] - 1.0 for i in range(-21, 0)]
-                    mean = sum(rets) / len(rets)
-                    vol = (sum((r - mean) ** 2 for r in rets) / len(rets)) ** 0.5
-                    mom5 = (w[-1] / w[-6] - 1.0) if len(w) >= 6 and w[-6] else None
-                    ma20 = sum(w[-20:]) / 20.0
-                    bias = w[-1] / ma20 - 1.0 if ma20 else 0.0
-                    factors[c] = {"mom": mom_map[c], "mom5": mom5, "vol": vol,
-                                  "bias": bias, "rsi": indicators.rsi(w, 14)}
-            ctx = self._ctx(d, val, nav_map, ledger=ledger, mom_map=mom_map)
-            ctx["funds_vol"] = {c: f["vol"] for c, f in factors.items()}
-            ctx["funds_mom5"] = {c: f["mom5"] for c, f in factors.items()}
-            ctx["funds_factors"] = factors
-            raw_score = score
-            smooth = self._smooth_score(ledger, raw_score)
-            ctx["score"] = smooth
-            ctx["raw_score"] = raw_score
-            ctx["defensive"] = self._defensive(ledger, d, smooth)
-            ctx["market_mom"] = st.get("mom20")  # 大盘20日动量，用于板块相对强弱
-            ctx["confidence"] = analysis.signal_confidence(sigs)  # 回放无消息面
-            plan = strategy.plan(self.cfg, ctx)
-            self._update_risk_lock(plan, d, smooth, ledger=ledger)
-            self._place_orders(d, plan, ledger=ledger)
-            # 4) 记录
-            src = "内置引擎·纯量化（回放，不含消息面）"
-            report = analysis.build_report(d, self._idx_name(), close, chg, st,
-                                           score, sigs, src,
-                                           extra_lines=self._plan_lines(plan, "auto", d))
-            ledger.add_record(d, score, chg, close,
-                              analysis.view_of(score)["title"], src, report,
-                              self._decision_text(plan, [], "auto", d))
-            ledger.add_snapshot(d, val["cash"], val["mv_eq"], val["mv_bond"],
-                                val["total"], ledger.fees(), close, "回放")
-            ledger.bump_peak(val["total"])
-            res.append({"date": d, "score": score, "total": val["total"],
-                        "cash": val["cash"], "mv_eq": val["mv_eq"],
-                        "mv_bond": val["mv_bond"], "chg_pct": chg,
-                        "index_close": close})
+            # 0) 当日“已公布”净值入窗（ffill 序列：每个指数交易日取<=d 的最新净值）
+            for c in univ_codes:
+                v = (nav_series.get(c) or {}).get(d)
+                if v is not None:
+                    win[c].append(v)
+            pool = self._replay_pool_for_day(
+                win, meta, eq_all, bond_all, set(ledger.positions()), top_eq)
+            saved_override = self._pool_override
+            self._pool_override = pool
+            try:
+                # 1) 成交历史挂单
+                for o in list(ledger.pending_orders()):
+                    if o["order_date"] >= d:
+                        continue
+                    nav = (nav_series.get(o["fund_code"]) or {}).get(d)
+                    if nav:
+                        self._fill_order(o, d, nav, ledger=ledger)
+                # 2) 估值与指标（覆盖“当日池 + 全部持仓”，避免轮动出池的持仓被漏估）
+                nav_map = {}
+                val_codes = set(self._pool_codes()) | set(ledger.positions())
+                for code in val_codes:
+                    nav = (nav_series.get(code) or {}).get(d)
+                    if nav:
+                        nav_map[code] = (d, nav)
+                st = indicators.last_stats(dates[:i + 1], closes[:i + 1],
+                                           index_vol[:i + 1])
+                val = self._valuation(nav_map, ledger=ledger)
+                score, sigs = analysis.score_market(st)
+                close = st.get("close")
+                chg = st.get("chg_pct")
+                # 3) 决策（回放：无当日消息面，按纯量化评分运行止损止盈等规则）
+                factors = {}
+                mom_map = {}
+                for c in self._eq_codes():
+                    w = win.get(c) or []
+                    if len(w) >= 22 and w[-22]:
+                        mom_map[c] = w[-1] / w[-22] - 1.0
+                        rets = [w[i] / w[i - 1] - 1.0 for i in range(-21, 0)]
+                        mean = sum(rets) / len(rets)
+                        vol = (sum((r - mean) ** 2 for r in rets) / len(rets)) ** 0.5
+                        mom5 = (w[-1] / w[-6] - 1.0) if len(w) >= 6 and w[-6] else None
+                        ma20 = sum(w[-20:]) / 20.0
+                        bias = w[-1] / ma20 - 1.0 if ma20 else 0.0
+                        factors[c] = {"mom": mom_map[c], "mom5": mom5, "vol": vol,
+                                      "bias": bias, "rsi": indicators.rsi(w, 14)}
+                ctx = self._ctx(d, val, nav_map, ledger=ledger, mom_map=mom_map)
+                ctx["names"].update({c: meta.get(c, {}).get("name", c)
+                                     for c in ledger.positions() if c in meta})
+                ctx["funds_vol"] = {c: f["vol"] for c, f in factors.items()}
+                ctx["funds_mom5"] = {c: f["mom5"] for c, f in factors.items()}
+                ctx["funds_factors"] = factors
+                raw_score = score
+                smooth = self._smooth_score(ledger, raw_score)
+                ctx["score"] = smooth
+                ctx["raw_score"] = raw_score
+                ctx["defensive"] = self._defensive(ledger, d, smooth)
+                ctx["market_mom"] = st.get("mom20")  # 大盘20日动量，用于板块相对强弱
+                ctx["confidence"] = analysis.signal_confidence(sigs)  # 回放无消息面
+                plan = strategy.plan(self.cfg, ctx)
+                self._update_risk_lock(plan, d, smooth, ledger=ledger)
+                self._place_orders(d, plan, ledger=ledger)
+                # 4) 记录
+                src = "内置引擎·纯量化（回放，不含消息面）"
+                report = analysis.build_report(d, self._idx_name(), close, chg, st,
+                                               score, sigs, src,
+                                               extra_lines=self._plan_lines(plan, "auto", d))
+                ledger.add_record(d, score, chg, close,
+                                  analysis.view_of(score)["title"], src, report,
+                                  self._decision_text(plan, [], "auto", d))
+                ledger.add_snapshot(d, val["cash"], val["mv_eq"], val["mv_bond"],
+                                    val["total"], ledger.fees(), close, "回放")
+                ledger.bump_peak(val["total"])
+            finally:
+                self._pool_override = saved_override
+            if i >= warmup_n:
+                res.append({"date": d, "score": score, "total": val["total"],
+                            "cash": val["cash"], "mv_eq": val["mv_eq"],
+                            "mv_bond": val["mv_bond"], "chg_pct": chg,
+                            "index_close": close})
         return res
 
     def _ffill_navs(self, trading_dates, hist_map):
@@ -1096,61 +1242,21 @@ class Engine:
         return out
 
     def backtest(self, months=6, source="auto", end_date=None):
-        """回测最近 months 个月。source: auto/live/demo。"""
-        mkt = self.market
-        months = max(1, int(months))
-        demo_flag = False
-        if source == "demo":
-            series = mkt.ensure_demo_series()
-            demo_flag = True
-        else:
-            try:
-                idx = mkt.index_history(
-                    need_from=util.add_days(util.today_str(), -(months * 31 + 25)))
-                hist = {}
-                for f in self._pool_items():
-                    seq = mkt.fund_history(f["code"],
-                                           need_from=util.add_days(idx[0][0], -10))
-                    hist[f["code"]] = {d: nav for d, nav in seq}
-                if end_date:
-                    idx = [x for x in idx if x[0] <= end_date]
-                if len(idx) < 20:
-                    raise DataError("在线K线不足20个交易日")
-            except DataError as e:
-                if source == "live":
-                    raise
-                if not mkt.demo_available():
-                    raise DataError("在线数据不可用，且无演示数据：" + str(e))
-                series = mkt.ensure_demo_series()
-                demo_flag = True
-        if demo_flag:
-            dates = series["dates"]
-            closes = series["index_close"]
-            vols = series["index_vol"]
-            hist = {code: {d: nav for d, nav in zip(dates, series["funds"][code])}
-                    for code in series["funds"]}
-        else:
-            dates = [x[0] for x in idx]
-            closes = [x[1] for x in idx]
-            vols = [x[2] for x in idx]
-        if end_date and not demo_flag:
-            dates = [d for d in dates if d <= end_date]
-            closes = closes[:len(dates)]
-            vols = vols[:len(dates)]
-        if len(dates) > int(months * 30.4):
-            n = int(months * 30.4)
-            dates, closes, vols = dates[-n:], closes[-n:], vols[-n:]
+        """回测最近 months 个月（source: auto/live/demo）。
+
+        修复口径（audit P0-3）：
+        - 回放池按“当日及之前”的动量逐日重建（point-in-time），不再用今天挑好的池回放历史；
+        - 前 warmup_n(默认60) 个交易日只用于预热指标/池选择，不计入收益统计；
+        - 输出增加同期沪深300 基准 buy&hold（bench_ret_pct）与说明字段。
+        """
+        demo_flag, dates, closes, vols, hist, warmup_n, skipped = \
+            self._prep_replay(months, source, end_date, warmup_n=60)
         nav_series = self._ffill_navs(dates, hist)
         sub = Ledger(":memory:",
                      initial_cash=float(self.acct.get("initial_cash", 500)))
-        # 演示数据只覆盖 config 池：回放期间强制用 config 池
-        saved_override = self._pool_override
-        if demo_flag:
-            self._pool_override = settings.pool_of(self.cfg)
-        try:
-            rows = self.simulate(sub, dates, closes, vols, nav_series)
-        finally:
-            self._pool_override = saved_override
+        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n)
+        # 账本一致性断言：资金守恒偏差超限直接失败（audit P0-4）
+        chk = sub.check_consistency(raise_on_mismatch=True, tol=0.02)
         totals = [r["total"] for r in rows]
         start_v = totals[0] if totals else 0
         end_v = totals[-1] if totals else 0
@@ -1161,21 +1267,31 @@ class Engine:
             if peak > 0:
                 max_dd = max(max_dd, (peak - t) / peak)
         trades = [o for o in sub.orders() if o["status"] == "filled"]
+        bench_ret = None
+        if warmup_n and len(closes) > warmup_n and closes[warmup_n - 1]:
+            bench_ret = closes[-1] / closes[warmup_n - 1] - 1.0
         return {
             "ok": True,
             "source": "demo" if demo_flag else "live",
             "demo": demo_flag,
-            "start": dates[0] if dates else None,
+            "start": dates[warmup_n] if warmup_n < len(dates) else
+                     (dates[-1] if dates else None),
             "end": dates[-1] if dates else None,
             "days": len(rows),
+            "warmup_days": warmup_n,
+            "consistency": chk,
             "initial": float(self.acct.get("initial_cash", 500)),
             "end_value": round(end_v, 2),
             "ret_pct": (end_v / start_v - 1) if start_v else 0,
+            "bench_ret_pct": (round(bench_ret, 6) if bench_ret is not None else None),
             "max_dd_pct": max_dd,
             "trades": len(trades),
             "fees": sub.fees(),
+            "skipped_codes": len(skipped),
             "target": float(self.acct.get("target_value", 800)),
             "goal_hit": bool(end_v >= float(self.acct.get("target_value", 800))),
+            "note": ("回测口径：point-in-time 逐日重建池 + 前 {} 个交易日预热不计入统计"
+                     "（不含消息面，非投资建议）".format(warmup_n)),
             "series": rows,
         }
 
@@ -1183,33 +1299,161 @@ class Engine:
                        end_date=None):
         """按时间顺序切分的回测（缓解样本内自证）。
 
-        full  = 整个回看窗口（等价于 backtest()，供对比）
-        train = 前段（历史上用于调参的数据，仍属样本内）
-        test  = 后段“样本外视角”切分：用**当前固定参数**直接跑，中途不再调参。
-                注意：若参数曾在后段也被人工微调过，它只是近似样本外；真正的
-                样本外 = 实验期逐日实盘。demo 数据仅用于流程验证，不构成结论。
+        - 整窗连续回放（单段 simulate、不各自从 1000 重放），前 warmup_n(默认60) 个
+          交易日只预热不计入统计 —— 修复原 test 段“从头累积指标、前 74% 残缺”的问题
+          （audit P0-3）；
+        - train/test 以“切分日的前一日总资产”为基准计算段内收益，避免重复计利；
+        - full 等价 backtest()；demo 数据仅用于流程验证，不构成结论。
         结果写 data/backtest_oos.json。
         """
+        demo_flag, dates, closes, vols, hist, warmup_n, skipped = \
+            self._prep_replay(months, source, end_date, warmup_n=60)
+        nav_series = self._ffill_navs(dates, hist)
+        sub = Ledger(":memory:",
+                     initial_cash=float(self.acct.get("initial_cash", 500)))
+        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n)
+        sub.check_consistency(raise_on_mismatch=True, tol=0.02)
+        n_stats = len(rows)  # 已剔除 warmup
+        k = int(n_stats * (1.0 - test_frac))
+        k = max(5, min(n_stats - 5, k))
+
+        def seg_stats(t0, t1):
+            """t0..t1 为 rows 下标（统计行）。基准资产 = 段首前一交易日的 total。"""
+            seg = rows[t0:t1]
+            if not seg:
+                return None
+            end_v = seg[-1]["total"]
+            if t0 - 1 >= 0:
+                base_v = rows[t0 - 1]["total"]  # warmup 最后一行的 total 或上一段末
+            else:
+                base_v = seg[0]["total"]
+            start_v = seg[0]["total"]
+            peak = -1e18
+            max_dd = 0.0
+            for r in seg:
+                t = r["total"]
+                peak = max(peak, t)
+                if peak > 0:
+                    max_dd = max(max_dd, (peak - t) / peak)
+            return {
+                "start": seg[0]["date"], "end": seg[-1]["date"],
+                "days": len(seg),
+                "end_value": round(end_v, 2),
+                "ret_pct": (end_v / start_v - 1) if start_v else 0,
+                "seg_ret_pct": (end_v / base_v - 1) if base_v else 0,
+                "max_dd_pct": max_dd,
+            }
+
+        full = seg_stats(0, n_stats)
+        train = seg_stats(0, k)
+        test = seg_stats(k, n_stats)
+        # 同期沪深300基准（warmup 结束日收盘为起点，buy&hold）
+        bench_full = bench_test = bench_train = None
+        if not demo_flag and warmup_n and len(closes) > warmup_n and \
+                closes[warmup_n - 1]:
+            bench_full = closes[-1] / closes[warmup_n - 1] - 1.0
+        if not demo_flag and warmup_n and len(closes) > k + warmup_n and \
+                closes[k + warmup_n - 1]:
+            bench_train = closes[k + warmup_n - 1] / closes[warmup_n - 1] - 1.0
+            bench_test = closes[-1] / closes[k + warmup_n - 1] - 1.0
+        out = {
+            "ok": True,
+            "source": "demo" if demo_flag else "live",
+            "demo": demo_flag,
+            "months": months, "test_frac": round(test_frac, 2),
+            "warmup_days": warmup_n,
+            "split_date": rows[k]["date"] if 0 <= k < n_stats else
+                          (rows[-1]["date"] if rows else None),
+            "initial": float(self.acct.get("initial_cash", 500)),
+            "target": float(self.acct.get("target_value", 800)),
+            "full": full, "train": train, "test": test,
+            "bench": {"full": bench_full, "train": bench_train,
+                      "test": bench_test,
+                      "note": "同期沪深300 buy&hold，以 warmup 结束日收盘为起点"},
+            "caveat": ("口径：point-in-time 逐日重建池 + 前 {} 个交易日预热不计统计；"
+                       "test 仍可能受“参数曾在后段被人工调过”影响，仅是近似样本外；"
+                       "真正的样本外=实验期逐日实盘。".format(warmup_n)
+                       if not demo_flag else "演示合成数据，仅用于流程验证"),
+            "skipped_codes": len(skipped),
+        }
+        return out
+
+    # ---------------- 回放数据准备（共用） ----------------
+    def _replay_codes(self):
+        """回放候选代码集合：config 池 + universe + 动态池 + 磁盘已有净值缓存。"""
+        codes = set()
+        for u in list(settings.universe_of(self.cfg)) + \
+                list(settings.pool_of(self.cfg)) + list(self._pool_items()):
+            if u.get("code"):
+                codes.add(u["code"])
+        try:
+            from pathlib import Path
+            for p in Path(str(util.CACHE_DIR)).glob("nav_*.json"):
+                codes.add(p.stem[4:])
+        except Exception:
+            pass
+        return sorted(codes)
+
+    def _replay_hist(self, codes, need_from):
+        """为回放批量取净值序列 {code: {date: nav}}；个别代码失败跳过并记录。
+
+        只读本地缓存（allow_online=False）：历史窗口够用即返回，不触发在线拉取。
+        """
+        hist, skipped = {}, []
+        for code in codes:
+            try:
+                seq = self.market.fund_history(code, need_from=need_from,
+                                               allow_online=False)
+            except DataError:
+                skipped.append(code)
+                continue
+            if seq:
+                hist[code] = {d: nav for d, nav in seq}
+            else:
+                skipped.append(code)
+        return hist, skipped
+
+    def _prep_replay(self, months, source, end_date, warmup_n=60):
+        """组装连续回放数据（含 warmup 预热前缀）。
+
+        返回 (demo_flag, dates, closes, vols, hist, warmup_n_实际, skipped_codes)。
+        demo 数据较短（合成 126 个交易日），不做 warmup。
+        """
         mkt = self.market
-        months = max(3, int(months))
-        test_frac = util.clamp(float(test_frac), 0.2, 0.6)
+        months = max(1, int(months))
+        window_days = int(months * 30.4)
         demo_flag = False
+        skipped = []
         if source == "demo":
             series = mkt.ensure_demo_series()
             demo_flag = True
+            dates = series["dates"]
+            closes = series["index_close"]
+            vols = series["index_vol"]
+            hist = {code: {d: nav for d, nav in zip(dates, series["funds"][code])}
+                    for code in series["funds"]}
         else:
             try:
-                idx = mkt.index_history(
-                    need_from=util.add_days(util.today_str(), -(months * 31 + 25)))
-                hist = {}
-                for f in self._pool_items():
-                    seq = mkt.fund_history(f["code"],
-                                           need_from=util.add_days(idx[0][0], -10))
-                    hist[f["code"]] = {d: nav for d, nav in seq}
+                need_from = util.add_days(util.today_str(),
+                                          -(months * 31 + int(warmup_n * 1.6) + 30))
+                idx = mkt.index_history(need_from=need_from)
+                if len(idx) < warmup_n + 20:
+                    raise DataError("在线K线不足（{}/{} 个交易日）".format(
+                        len(idx), warmup_n + 20))
+                codes = self._replay_codes()
+                need0 = util.add_days(idx[0][0], -50)
+                hist, skipped = self._replay_hist(codes, need0)
                 if end_date:
                     idx = [x for x in idx if x[0] <= end_date]
-                if len(idx) < 60:
-                    raise DataError("在线K线不足60个交易日，样本外切分至少需要约3个月数据")
+                dates = [x[0] for x in idx]
+                closes = [x[1] for x in idx]
+                vols = [x[2] for x in idx]
+                if end_date:
+                    pairs = list(zip(dates, closes, vols))
+                    pairs = [p for p in pairs if p[0] <= end_date]
+                    dates, closes, vols = ([p[0] for p in pairs],
+                                           [p[1] for p in pairs],
+                                           [p[2] for p in pairs])
             except DataError as e:
                 if source == "live":
                     raise
@@ -1217,77 +1461,23 @@ class Engine:
                     raise DataError("在线数据不可用，且无演示数据：" + str(e))
                 series = mkt.ensure_demo_series()
                 demo_flag = True
+                dates = series["dates"]
+                closes = series["index_close"]
+                vols = series["index_vol"]
+                hist = {code: {d: nav for d, nav in
+                               zip(dates, series["funds"][code])}
+                        for code in series["funds"]}
         if demo_flag:
-            dates = series["dates"]
-            closes = series["index_close"]
-            vols = series["index_vol"]
-            hist = {code: {d: nav for d, nav in zip(dates, series["funds"][code])}
-                    for code in series["funds"]}
+            warmup_n = 0  # 合成数据较短，不做预热（原有口径）
         else:
-            dates = [x[0] for x in idx]
-            closes = [x[1] for x in idx]
-            vols = [x[2] for x in idx]
-        if end_date and not demo_flag:
-            dates = [d for d in dates if d <= end_date]
-            closes = closes[:len(dates)]
-            vols = vols[:len(dates)]
-        if len(dates) > int(months * 30.4):
-            n = int(months * 30.4)
-            dates, closes, vols = dates[-n:], closes[-n:], vols[-n:]
-        if len(dates) < 60:
-            raise DataError("有效交易日不足（{} 天），样本外切分至少约3个月".format(len(dates)))
-        nav_series = self._ffill_navs(dates, hist)
-        k = int(len(dates) * (1.0 - test_frac))
-        k = max(20, min(len(dates) - 20, k))
-
-        def stats_for(d_sub, c_sub, v_sub, nav_sub):
-            sub = Ledger(":memory:",
-                         initial_cash=float(self.acct.get("initial_cash", 500)))
-            saved_override = self._pool_override
-            if demo_flag:
-                self._pool_override = settings.pool_of(self.cfg)
-            try:
-                rows = self.simulate(sub, d_sub, c_sub, v_sub, nav_sub)
-            finally:
-                self._pool_override = saved_override
-            totals = [r["total"] for r in rows]
-            start_v = totals[0] if totals else 0
-            end_v = totals[-1] if totals else 0
-            peak = -1e18
-            max_dd = 0.0
-            for t in totals:
-                peak = max(peak, t)
-                if peak > 0:
-                    max_dd = max(max_dd, (peak - t) / peak)
-            trades = [o for o in sub.orders() if o["status"] == "filled"]
-            return {
-                "start": d_sub[0] if d_sub else None,
-                "end": d_sub[-1] if d_sub else None,
-                "days": len(rows),
-                "end_value": round(end_v, 2),
-                "ret_pct": (end_v / start_v - 1) if start_v else 0,
-                "max_dd_pct": max_dd,
-                "trades": len(trades),
-                "fees": sub.fees(),
-            }
-
-        full = stats_for(dates, closes, vols, nav_series)
-        seg_nav = nav_series
-        train = stats_for(dates[:k], closes[:k], vols[:k], seg_nav)
-        test = stats_for(dates[k:], closes[k:], vols[k:], seg_nav)
-        out = {
-            "ok": True,
-            "source": "demo" if demo_flag else "live",
-            "demo": demo_flag,
-            "months": months, "test_frac": round(test_frac, 2),
-            "split_date": dates[k] if k < len(dates) else None,
-            "initial": float(self.acct.get("initial_cash", 500)),
-            "target": float(self.acct.get("target_value", 800)),
-            "full": full, "train": train, "test": test,
-            "caveat": ("参数若曾在后段被调过，test 仅近似样本外；真正的样本外=实验期逐日实盘。"
-                       if not demo_flag else "演示合成数据，仅用于流程验证"),
-        }
-        return out
+            # 只保留最近 window_days+warmup_n 个交易日（含预热），控制回放规模
+            keep = window_days + warmup_n
+            if len(dates) > keep:
+                dates, closes, vols = dates[-keep:], closes[-keep:], vols[-keep:]
+            if len(dates) < warmup_n + 20:
+                raise DataError("有效交易日不足（{} 天），需至少预热 {} 天 + 20 个统计日".format(
+                    len(dates), warmup_n))
+        return demo_flag, dates, closes, vols, hist, warmup_n, skipped
 
     # ================= 演示库 =================
     def run_demo(self, reset=True):

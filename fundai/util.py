@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """通用工具：路径、日期、HTTP、JSON、金额格式化。仅标准库。"""
 import json
+import re
 import socket
 import time
 import urllib.error
@@ -17,6 +18,11 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 TZ_CN = timezone(timedelta(hours=8))
+
+# 进程内交易日历：由 Market 在成功取得指数K线后注册（真实交易日，含节假日剔除）；
+# 未注册时回退为“工作日近似”。list[str] 升序（YYYY-MM-DD）。
+_CALENDAR = None
+CALENDAR_SOURCE = "weekday"
 
 
 class DataError(Exception):
@@ -79,10 +85,33 @@ def is_weekday(s):
     return parse_d(s).weekday() < 5
 
 
-def trading_days_between(start, end):
-    """按工作日近似交易日（演示/估算用，忽略法定节假日）。"""
-    out, d = [], parse_d(start)
-    e = parse_d(end)
+# ---------------- 交易日历（真实K线日期集，可注册） ----------------
+def set_calendar(dates):
+    """注册真实交易日序列（指数K线日期，升序、YYYY-MM-DD）。"""
+    global _CALENDAR, CALENDAR_SOURCE
+    clean = sorted({fmt_d(d) for d in (dates or [])})
+    if len(clean) >= 5:
+        _CALENDAR = clean
+        CALENDAR_SOURCE = "kline"
+
+
+def calendar_dates():
+    return _CALENDAR
+
+
+def _trading_dates_between(start, end, cal):
+    """在 [start,end] 内按 cal 或工作日近似生成交易日字符串（升序）。"""
+    out = []
+    if cal:
+        lo, hi = parse_d(start), parse_d(end)
+        for d in cal:
+            dd = parse_d(d)
+            if lo <= dd <= hi:
+                out.append(d)
+            elif dd > hi:
+                break
+        return out
+    d, e = parse_d(start), parse_d(end)
     while d <= e:
         if d.weekday() < 5:
             out.append(fmt_d(d))
@@ -90,17 +119,46 @@ def trading_days_between(start, end):
     return out
 
 
+def trading_days_between(start, end):
+    """[start,end] 内的交易日（已注册K线日历则用真实日历，否则工作日近似）。"""
+    return _trading_dates_between(start, end, _CALENDAR)
+
+
 def add_trading_days(s, n):
-    """返回 s 之后第 n 个（工作日近似）交易日；n<=0 时返回 s。"""
+    """返回 s 之后第 n 个交易日；n<=0 时返回 s。
+
+    已注册K线日历则按真实日历；日历终点之前不足 n 个时，超出部分回退为
+    工作日近似（不影响“日历终点之后无节假日数据”的常态情况）。
+    """
     if n <= 0:
         return fmt_d(parse_d(s))
-    days = trading_days_between(add_days(s, 1), add_days(s, n * 3 + 10))
-    return days[n - 1] if len(days) >= n else days[-1]
+    span = int(n * 7 + 12)
+    end_s = add_days(s, span)
+    days = _trading_dates_between(add_days(s, 1), end_s, _CALENDAR)
+    if len(days) >= n:
+        return days[n - 1]
+    if _CALENDAR:
+        # 日历不够长：先用日历里的日子，再用工作日补足差额
+        rest = _trading_dates_between(
+            add_days((days[-1] if days else s), 1), end_s, None)
+        days = days + rest
+    return days[n - 1] if len(days) >= n else (days[-1] if days else fmt_d(parse_d(s)))
 
 
 def prev_trading_day(s):
-    """返回 s 之前最近的一个（工作日近似）交易日（不含 s）。"""
-    days = trading_days_between(add_days(s, -10), add_days(s, -1))
+    """返回 s 之前最近的一个交易日（不含 s）；已注册日历则用真实日历。"""
+    if _CALENDAR:
+        lo, hi = parse_d(s), parse_d(s)
+        prev = None
+        for d in _CALENDAR:
+            dd = parse_d(d)
+            if dd >= hi:
+                break
+            prev = d
+        if prev:
+            return prev
+    # 无日历，或 s 早于日历起点：退回纯工作日近似（避免与日历混用导致空结果）
+    days = _trading_dates_between(add_days(s, -10), add_days(s, -1), None)
     return days[-1] if days else fmt_d(parse_d(s))
 
 
@@ -140,6 +198,23 @@ def pct2(x):
 
 
 # ---------------- HTTP ----------------
+_TOKEN_RE = re.compile(r"(token=)[^&\s\"']+", re.IGNORECASE)
+_AUTH_RE = re.compile(r"(Authorization:\s*Bearer\s+)[^\s]+", re.IGNORECASE)
+
+
+def _redact(text):
+    """把 URL/报文里的 token=xxx 与 Bearer 凭据打码，防止泄漏到日志/前端/数据库。"""
+    s = str(text or "")
+    s = _TOKEN_RE.sub(r"\1***", s)
+    s = _AUTH_RE.sub(r"\1***", s)
+    return s
+
+
+def _err_tail(url, last):
+    return _redact(str(url)[:90]) if last is None else \
+        _redact(str(url)[:90]) + "：" + _redact(str(last))
+
+
 def http_get(url, headers=None, timeout=12, tries=2):
     last = None
     for i in range(max(1, tries)):
@@ -155,7 +230,7 @@ def http_get(url, headers=None, timeout=12, tries=2):
                 socket.timeout, TimeoutError, ConnectionError, OSError) as e:
             last = e
             time.sleep(0.8 * (i + 1))
-    raise DataError("请求失败 {}: {}".format(url[:90], last))
+    raise DataError("请求失败 {}".format(_err_tail(url, last)))
 
 
 def http_get_text(url, headers=None, timeout=12, tries=2):
@@ -168,7 +243,8 @@ def http_get_json(url, headers=None, timeout=12, tries=2):
     try:
         return json.loads(txt)
     except Exception as e:
-        raise DataError("JSON 解析失败 {}: {}".format(url[:90], e))
+        raise DataError("JSON 解析失败 {}: {}".format(
+            _redact(str(url)[:90]), _redact(str(e)[:160])))
 
 
 def http_post_json(url, payload, headers=None, timeout=60, tries=1):
@@ -187,7 +263,7 @@ def http_post_json(url, payload, headers=None, timeout=60, tries=1):
         except Exception as e:
             last = e
             time.sleep(1.0)
-    raise DataError("POST 失败 {}: {}".format(url[:90], last))
+    raise DataError("POST 失败 {}".format(_err_tail(url, last)))
 
 
 # ---------------- JSON 文件 ----------------

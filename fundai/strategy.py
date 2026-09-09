@@ -207,6 +207,10 @@ def plan(cfg, ctx):
     mom = dict(ctx.get("funds_mom") or {})
     vol = dict(ctx.get("funds_vol") or {})
     mom5 = dict(ctx.get("funds_mom5") or {})
+    # 未执行/已提交订单的方向集合：反向挂单（昨日卖A未执行→今日又想买A 等）一律排除，
+    # 避免同一只基金同日出现互相矛盾的买卖指令（详见 audit P0-5）。
+    pend_sell = set(ctx.get("pending_sell_codes") or ())
+    pend_buy = set(ctx.get("pending_buy_codes") or ())
     eq_codes = list(ctx.get("equity_codes") or
                     [f["code"] for f in settings.equity_candidates(cfg)])
     names = ctx.get("names") or {}
@@ -265,6 +269,11 @@ def plan(cfg, ctx):
     for code, info in fund_pnl.items():
         pnl = info.get("pnl_pct")
         if pnl is None:
+            continue
+        if code in pend_buy:
+            # 还有未执行的申购旧单：先让用户处理，避免“还没买成就触发止损卖”的悖论
+            msgs.append("{} 存在未执行的申购建议，先处理旧单后再评估止损/止盈".format(
+                nm_of(code)))
             continue
         locked_v = float((info or {}).get("locked_mv", 0) or 0)
         if pnl <= stop_loss:
@@ -350,6 +359,8 @@ def plan(cfg, ctx):
             for code in holders:
                 if cut <= 0:
                     break
+                if code in pend_buy:
+                    continue  # 有未执行的申购旧单，暂不动
                 a = min(cut, sell_eq.get(code, 0.0))
                 if a >= _min_buy(cfg, code):
                     if _add(cfg, orders, msgs, code, "sell", a,
@@ -383,6 +394,12 @@ def plan(cfg, ctx):
     factor_weights = st.get("factor_weights")  # 多因子权重（None → 纯动量）
     factors = ctx.get("funds_factors") or {}
     avail_eq = [c for c in eq_codes if c not in risk_touched]
+    # 有未执行赎回旧单的基金不进入买入候选（避免与旧卖单方向相反）
+    blocked = [c for c in avail_eq if c in pend_sell]
+    avail_eq = [c for c in avail_eq if c not in pend_sell]
+    for c in blocked:
+        msgs.append("{} 存在未执行的赎回旧单，先处理旧单后再纳入买入候选".format(
+            nm_of(c)))
     cand_codes = []
     for c in avail_eq:
         m = mom.get(c)
@@ -436,7 +453,10 @@ def plan(cfg, ctx):
         need = diff * total
         sold_bond = 0.0
         short = need - avail_cash
-        if short > 5.0 and sell_bond >= _min_buy(cfg, bond_code or ""):
+        if bond_code and bond_code in pend_buy:
+            msgs.append("债基 {} 存在未执行的申购旧单，暂不赎旧买新，先处理旧单".format(
+                nm_of(bond_code)))
+        elif short > 5.0 and sell_bond >= _min_buy(cfg, bond_code or ""):
             sold_bond = min(short, sell_bond)
             _add(cfg, orders, msgs, bond_code, "sell", sold_bond,
                  "为加仓股基筹措资金，赎回债基" +
@@ -465,6 +485,8 @@ def plan(cfg, ctx):
         for code in holders:
             if cut <= 0:
                 break
+            if code in pend_buy:
+                continue  # 有未执行的申购旧单，先处理旧单
             a = min(cut, sell_eq.get(code, 0.0))
             if a >= _min_buy(cfg, code):
                 held_m = mom.get(code)
@@ -490,6 +512,10 @@ def plan(cfg, ctx):
         holders = sorted(eq_hold, key=lambda c: -sell_eq.get(c, 0.0))
         for code in holders:
             if code in winner_codes or code in risk_touched:
+                continue
+            if code in pend_buy:
+                msgs.append("{} 存在未执行的申购旧单，先处理旧单，本轮暂不轮动卖出".format(
+                    nm_of(code)))
                 continue
             sellable = sell_eq.get(code, 0.0)
             held_mom = mom.get(code)

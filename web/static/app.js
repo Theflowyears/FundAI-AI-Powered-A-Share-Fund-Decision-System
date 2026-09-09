@@ -149,7 +149,7 @@ function renderDash() {
   $("cAlloc").textContent = [fmtMoney0(ST.cash), fmtMoney0(ST.mv_eq), fmtMoney0(ST.mv_bond)].join(" / ");
   $("cAllocPct").textContent = "现金 / 股票基金 / 债券基金";
   const nPos = ST.positions.length;
-  const posBrief = nPos ? ST.positions.map(p => p.name + " " + p.shares + "份").join("、") : "暂无持仓";
+  const posBrief = nPos ? ST.positions.map(p => esc(p.name) + " " + p.shares + "份").join("、") : "暂无持仓";
 
   const days = ST.days_left, est = ST.est_trading_days;
   $("cPeriod").innerHTML = ST.start + " → " + ST.end + "<br><span class='mut small'>" + posBrief + "</span>";
@@ -552,6 +552,7 @@ function renderOrders() {
         <div style="display:flex; gap:8px">
           ${ST.exec_mode === "manual" && !ST.demo
             ? `<button class="btn small primary" data-confirm="${o.id}">✔ 我已在支付宝/天天基金提交</button>
+               <button class="btn small" data-fill="${o.id}">录入实际成交</button>
                <button class="btn small" data-skip="${o.id}">放弃该建议</button>`
             : `<button class="btn small" data-skip="${o.id}">取消该建议</button>`}
         </div>
@@ -569,6 +570,10 @@ function renderOrders() {
           ${esc(o.nav_value_date || "—")} 净值成交 → ${esc(o.confirm_date || "—")} 份额自动确认入账，
           到确认日后运行「立即运行今日研判」即自动完成（无需再操作）。
         </div>
+        <div style="display:flex; gap:8px">
+          ${!ST.demo ? `<button class="btn small" data-fill="${o.id}">录入实际成交</button>
+               <button class="btn small" data-unsubmit="${o.id}">撤销提交</button>` : ""}
+        </div>
       </div>`).join("");
     }
     box.innerHTML = html;
@@ -584,6 +589,14 @@ function renderOrders() {
   box.querySelectorAll("[data-skip]").forEach(b => b.onclick = async () => {
     try { await api("/api/orders/skip", { method: "POST", body: { id: Number(b.dataset.skip) } });
       toast("已跳过该指令", "ok"); loadAll(true);
+    } catch (e) { toast(e.message, "err"); }
+  });
+  box.querySelectorAll("[data-fill]").forEach(b => b.onclick = () => openFill(Number(b.dataset.fill)));
+  box.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = async () => {
+    if (!confirm("确认撤销该笔提交？请以你在支付宝/天天基金的真实操作为准。")) return;
+    try {
+      const r = await api("/api/orders/skip", { method: "POST", body: { id: Number(b.dataset.unsubmit) } });
+      toast(r.message || "已撤销提交", "ok"); loadAll(true);
     } catch (e) { toast(e.message, "err"); }
   });
 
