@@ -1566,22 +1566,9 @@ class Engine:
                 pass
         return out
 
-    def state_payload(self):
-        meta = self.account()
-        today = util.today_str()
-        nav_map = self.nav_latest_map()
-        val = self._valuation(nav_map)
+    def _positions_detail(self, nav_map):
+        """按 nav_map({code:(nav_date,nav)}) 生成持仓明细（与 state.positions 同构）。"""
         pos = self.ledger.positions()
-        target = float(meta.get("target_value", 800))
-        initial = float(meta.get("initial_cash", 500))
-        start = meta.get("start_date") or today
-        end = meta.get("end_date") or util.add_days(start, HALF_YEAR_DAYS)
-        days_left = max(0, (util.parse_d(end) - util.parse_d(today)).days)
-        est_td = len(util.trading_days_between(today, end)) if days_left else 0
-        total = val["total"]
-        need_ret = None
-        if total > 0 and est_td > 0:
-            need_ret = (target / total) ** (1.0 / est_td) - 1.0
         positions = []
         for code, shares in pos.items():
             item = self.pool_item(code)
@@ -1605,6 +1592,64 @@ class Engine:
                 "pnl_pct": pnl_pct,
             })
         positions.sort(key=lambda x: -x["value"])
+        return positions
+
+    def refresh_positions(self):
+        """“持仓盈亏”手动刷新：只对持仓基金强制在线取最新净值（忽略快照/磁盘新鲜），
+        其余池内基金不动，尽量少占配额。返回与 state.positions 同构的明细 + 资金汇总。
+        """
+        pos = self.ledger.positions()
+        nav_map, stale = {}, []
+        if not pos:
+            return {"ok": True, "positions": [], "cash": self.ledger.cash(),
+                    "mv_eq": 0.0, "mv_bond": 0.0, "total": self.ledger.cash(),
+                    "fees": self.ledger.fees(), "stale": [],
+                    "refreshed_at": util.now_iso()}
+        if self.demo:
+            s = self.market.demo_series() or {}
+            last = s.get("dates", [None])[-1]
+            for code in pos:
+                fs = s.get("funds", {}).get(code) or []
+                nav_map[code] = (last, fs[-1] if fs else None)
+        else:
+            for code in pos:
+                try:
+                    d, nav = self.market.fund_latest(code, force_live=True)
+                except DataError:
+                    d, nav = None, None
+                if d and nav:
+                    nav_map[code] = (d, nav)
+                else:
+                    stale.append(code)
+        val = self._valuation(nav_map)
+        return {
+            "ok": True,
+            "positions": self._positions_detail(nav_map),
+            "cash": val["cash"],
+            "mv_eq": val["mv_eq"], "mv_bond": val["mv_bond"],
+            "total": val["total"],
+            "fees": self.ledger.fees(),
+            "nav_dates": {c: p[0] for c, p in nav_map.items()},
+            "stale": stale,
+            "refreshed_at": util.now_iso(),
+        }
+
+    def state_payload(self):
+        meta = self.account()
+        today = util.today_str()
+        nav_map = self.nav_latest_map()
+        val = self._valuation(nav_map)
+        target = float(meta.get("target_value", 800))
+        initial = float(meta.get("initial_cash", 500))
+        start = meta.get("start_date") or today
+        end = meta.get("end_date") or util.add_days(start, HALF_YEAR_DAYS)
+        days_left = max(0, (util.parse_d(end) - util.parse_d(today)).days)
+        est_td = len(util.trading_days_between(today, end)) if days_left else 0
+        total = val["total"]
+        need_ret = None
+        if total > 0 and est_td > 0:
+            need_ret = (target / total) ** (1.0 / est_td) - 1.0
+        positions = self._positions_detail(nav_map)
         # 待执行(pending) + 已提交待T+1确认(submitted) 一并返回，前端按状态展示
         pending = self.ledger.pending_orders() + self.ledger.submitted_orders()
         for o in pending:
