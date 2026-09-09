@@ -282,4 +282,13 @@ def save_json(path, obj):
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1), "utf-8")
-    tmp.replace(p)
+    # 多进程/多线程并发写同一缓存时，os.replace 可能被占用；短重试后仍失败再抛
+    last = None
+    for i in range(4):
+        try:
+            tmp.replace(p)
+            return
+        except OSError as e:
+            last = e
+            time.sleep(0.15 * (i + 1))
+    raise last
