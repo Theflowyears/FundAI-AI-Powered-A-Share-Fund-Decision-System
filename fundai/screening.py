@@ -130,6 +130,22 @@ class ScreeningStore:
                 return True
         return False
 
+    @staticmethod
+    def review_split(items, cap=50):
+        """打标前分流：AI 没把握(中性)的进人工额度（前 cap 条），其余按 AI 采纳/已打标。
+
+        返回 (to_review, extra_neutral, ai_accepted, done)。items 保持传入顺序。
+        """
+        to_review, extra, ai, done = [], [], [], []
+        for r in items:
+            if r.get("user_label"):
+                done.append(r)
+            elif (r.get("auto_label") or "neutral") == "neutral":
+                (to_review if len(to_review) < int(cap) else extra).append(r)
+            else:
+                ai.append(r)
+        return to_review, extra, ai, done
+
     def ingest_feed(self, date_s, feed, keep_user=True, skip_recent=True):
         """把当天全量消息写入（自动字段覆盖；用户已打标字段保留）。返回写入条数。
 

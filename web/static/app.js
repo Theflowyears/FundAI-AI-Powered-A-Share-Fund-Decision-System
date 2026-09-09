@@ -927,16 +927,22 @@ function renderNews() {
       "（方向打标 " + h.directional + " 条 / 共 " + h.labeled + " 条）";
   } else {
     $("nHumanScore").textContent = "未打标";
-    $("nLabels").textContent = "逐条打标后，算法会优先采用你的“人工消息分”";
+    $("nLabels").textContent = "AI 已直接采纳 " + (NEWS.ai_accepted || 0) + " 条明确利好/利空；" +
+      "只挑 AI 没把握的（中性）" + (NEWS.todo || 0) + " 条给你确认（≤50），确认后算法学成语录词并用于人工消息分";
   }
   const by = NEWS.labels.by_label || {};
-  const doneN = NEWS.labels.labeled || 0;
-  $("nProgress").textContent = doneN + " / " + NEWS.feed_count + " 条已打标";
+  const doneN = NEWS.done || 0;
+  $("nProgress").textContent = "待确认 " + (NEWS.todo || 0) + " 条 · AI 已采纳 " +
+    (NEWS.ai_accepted || 0) + " 条 · 已打标 " + doneN + " / 共 " + NEWS.feed_count + " 条";
   const isToday = NEWS.date === todayStrLocal();
+  let capNote = "";
+  if (isToday && (NEWS.review_extra || 0) > 0) {
+    capNote = " · 另有 " + NEWS.review_extra + " 条中性超出 50 条人工额度，默认按 AI 中性处理";
+  }
   $("nScoreNote").innerHTML = "消息权重 " + Math.round(NEWS.cfg.news_weight * 100) +
     "% · 学习词 " + NEWS.learned_total + " 个 · " +
     (NEWS.demo ? "" : NEWS.feed_count ? NEWS.feed_count + " 条已入库" : "尚未拉取") +
-    (isToday ? "" : "（非今日，只读历史）");
+    (isToday ? capNote : "（非今日，只读历史）");
   renderNewsFeed();
   renderNewsDir();
   renderNewsLearn();
@@ -947,10 +953,14 @@ function renderNews() {
 function renderNewsFeed() {
   const items = (NEWS.feed || []).filter(it => {
     if (NF === "all") return true;
-    if (NF === "unrated") return !it.user_label;
+    if (NF === "unrated") return it.needs_review && !it.user_label; // 待你确认(≤50)
+    if (NF === "auto") return it.ai_decided && !it.user_label;      // AI 已采纳
     return it.user_label ? it.user_label === NF : it.auto_label === NF;
   });
-  $("nFeedCount").textContent = "共 " + NEWS.feed_count + " 条，当前显示 " + items.length + " 条";
+  const shownNote = NF === "unrated" ? "（AI 没把握、待你确认）"
+    : NF === "auto" ? "（AI 已直接采纳，可展开覆盖）" : "";
+  $("nFeedCount").textContent = "共 " + NEWS.feed_count + " 条，当前显示 " + items.length +
+    " 条" + shownNote;
   const box = $("nFeedList");
   if (!items.length) {
     box.innerHTML = `<div class="mut">暂无消息。先点上方【拉取今日消息】；若在线源失败，会登记到右侧“搜索补全”清单。</div>`;
@@ -964,21 +974,32 @@ function renderNewsFeed() {
     const autoSign = it.auto_label === "bull" ? "+" : it.auto_label === "bear" ? "−" : "";
     const sectors = (it.sectors || []).map(s => `<span class="pill">板块·${esc(s)}</span>`).join("");
     const funds = (it.funds_links || []).map(f => `<span class="pill">→ ${esc(f.name)}</span>`).join("");
+    const unlabeled = !it.user_label;
+    const autoOnly = unlabeled && !it.needs_review;  // AI 已采纳 / 中性超额：默认不打标
     const buttons = Object.keys(LABEL_TXT).map(k =>
       `<button class="ratebtn ${it.user_label === k ? (k.includes("bull") ? "on-bull" : k.includes("bear") ? "on-bear" : k === "neutral" ? "on-neutral" : "") : ""}"
         data-rate="${it.id}" data-label="${k}">${LABEL_TXT[k]}</button>`).join("");
+    const flagPill = it.needs_review
+      ? `<span class="pill" style="color:#f7b731;border-color:rgba(247,183,49,.6)">待你确认</span>`
+      : (autoOnly && it.ai_decided
+          ? `<span class="pill" style="color:#4adf9a;border-color:rgba(33,191,115,.5)">AI 已自动采纳${autoSign}${autoTxt}</span>`
+          : (autoOnly && unlabeled ? `<span class="pill" style="color:#8d99ae">超出额度·按AI中性</span>` : ""));
     return `<div class="feed-item lab-${lab === "irrelevant" ? "neutral" : lab}">
       <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap">
         <span class="pill">${esc(it.time || "")} ${esc(it.source || "")}</span>
         <span class="pill" style="${it.auto_label === "bull" ? "color:#ff7d80;border-color:rgba(255,77,79,.5)" :
             it.auto_label === "bear" ? "color:#4adf9a;border-color:rgba(33,191,115,.5)" : ""}">
           自动:${autoTxt}${autoSign}</span>
-        ${sectors}${funds}
+        ${flagPill}${sectors}${funds}
       </div>
       <div style="margin:4px 0; font-weight:600; line-height:1.5">${esc(it.title || "")}</div>
       ${it.text && it.text !== it.title ? `<div class="mut small clamp2" style="margin-bottom:4px">${esc(it.text)}</div>` : ""}
       <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center">
-        <span class="mut small">我的判断：</span>${buttons}
+        <span class="mut small">我的判断：</span>
+        ${autoOnly && unlabeled
+          ? `<span class="ratebox" style="display:none">${buttons}</span>
+             <a href="javascript:;" class="mut small" data-reveal>有异议？点这里手动打标</a>`
+          : `<span class="ratebox">${buttons}</span>`}
       </div>
     </div>`;
   }).join("");
@@ -992,6 +1013,12 @@ document.querySelectorAll("[data-nf]").forEach(b => b.onclick = () => {
 });
 
 $("nFeedList").addEventListener("click", async (ev) => {
+  const rev = ev.target.closest("[data-reveal]");
+  if (rev) {
+    const box = rev.parentElement.querySelector(".ratebox");
+    if (box) { box.style.display = "inline-flex"; rev.remove(); }
+    return;
+  }
   const b = ev.target.closest("[data-rate]");
   if (!b) return;
   try {
