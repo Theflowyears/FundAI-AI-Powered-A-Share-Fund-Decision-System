@@ -15,6 +15,7 @@ python app.py state                # 打印账户状态
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -249,6 +250,23 @@ def cmd_oos(args):
     return 0
 
 
+def cmd_fetch_history(args):
+    """把主基准指数历史K线一次性延伸至 --years 年并写本地缓存（智兔/东财，
+    约各 1 次全区间请求）。为长周期回测/历史语境准备数据（等价于 BaoStock
+    免费十年行情的接入方式，无强依赖、无需装包）。"""
+    from fundai import settings, util
+    from fundai.datasource import Market
+    cfg = settings.load_config()
+    mkt = Market(cfg)
+    res = mkt.extend_index_history(years=args.years,
+                                   with_benchmarks=args.bench)
+    res["cache_file"] = str(util.cache_file(
+        "kline_{}.json".format(re.sub(r"[^0-9A-Za-z]", "_", mkt._index_key()))))
+    jprint(res)
+    print("提示：主基准指数缓存已延伸；长窗口样本外回测可用 python app.py oos --months 36 验证。")
+    return 0
+
+
 def cmd_serve(args):
     cfg = settings.load_config()
     db = DB_DEMO if args.demo else DB_LIVE
@@ -332,6 +350,13 @@ def main():
     oos.add_argument("--test", type=float, default=0.35, help="后段测试占比(0.2~0.6)")
     oos.add_argument("--source", default="auto", choices=["auto", "live", "demo"])
     oos.set_defaults(fn=cmd_oos)
+
+    fh = sub.add_parser("fetch-history",
+                        help="把主基准指数历史K线延伸至N年写本地缓存（供长周期回测/历史语境）")
+    fh.add_argument("--years", type=int, default=8)
+    fh.add_argument("--bench", action="store_true",
+                    help="同时抓取页面大盘指数条的长期K线（东财）")
+    fh.set_defaults(fn=cmd_fetch_history)
 
     args = p.parse_args()
     if not args.cmd:
