@@ -240,5 +240,111 @@ class KlineFinalBarTest(unittest.TestCase):
         self.assertEqual([x[0] for x in seq], ["2026-09-08"])
 
 
+class TermLearningTest(unittest.TestCase):
+    def test_fin_terms_sanity(self):
+        from fundai import lexicon
+        self.assertGreater(len(lexicon.FIN_TERMS), 200)
+        # 关键术语必须存在
+        for t in ("降准", "固态电池", "半导体", "回购", "北向资金"):
+            self.assertIn(t, lexicon.FIN_TERMS)
+        # 术语化判定：术语本身/紧凑扩展通过，无关碎片不通过
+        self.assertTrue(lexicon.termness("降准"))
+        self.assertTrue(lexicon.termness("固态电池装车"))   # 扩展 ≤2 字
+        self.assertFalse(lexicon.termness("慈善基金会"))     # “基金”长出 3 字
+        self.assertFalse(lexicon.termness("火车站广场"))
+
+    def test_learn_only_fin_terms(self):
+        from fundai import lexicon
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        feed = [
+            {"id": "d1", "title": "固态电池量产提速 头部企业拿下大额订单",
+             "text": "固态电池装车 概念股走强 板块活跃", "auto_label": "bull",
+             "auto_strength": 1, "source": "x", "time": "10:00"},
+            {"id": "d2", "title": "固态电池产业化项目密集落地 设备厂商受益",
+             "text": "固态电池需求旺盛 产业链公司扩产", "auto_label": "bull",
+             "auto_strength": 1, "source": "x", "time": "10:01"},
+            {"id": "d3", "title": "火车站广场发生爆炸 现场救援进行中",
+             "text": "爆炸波及周边地区 伤亡情况不明", "auto_label": "bear",
+             "auto_strength": -1, "source": "x", "time": "10:02"},
+        ]
+        scr.ingest_feed("2026-09-01", feed, skip_recent=False)
+        with scr.conn:
+            scr.conn.execute("UPDATE items SET user_label='bull',"
+                             "user_strength=1 WHERE item_id IN ('d1','d2')")
+            scr.conn.execute("UPDATE items SET user_label='bear',"
+                             "user_strength=-1 WHERE item_id='d3'")
+        n = scr.learn_all()
+        learned = {w["word"] for w in scr.lexicon_rows(1000)}
+        # 与金融术语无关的碎片（火车站/爆炸/现场）不应被学
+        self.assertFalse(learned & {"火车站", "火车站广场", "爆炸", "现场救援"})
+        # 术语化的常见表达至少学到一个
+        self.assertTrue(learned & {"固态电池", "电池"})
+        self.assertGreaterEqual(n, 1)
+        scr.close()
+
+
+class NewsCleanTest(unittest.TestCase):
+    def test_fetch_news_filters_irrelevant(self):
+        import fundai.news as nm
+        from fundai.util import DataError
+        items = [
+            {"source": "东财快讯", "time": "2026-09-09 09:00",
+             "title": "央行开展逆回购操作 维护流动性合理充裕", "text": "央行逆回购 500 亿"},
+            {"source": "东财快讯", "time": "2026-09-09 09:01",
+             "title": "某地火车站发生爆炸 造成人员受伤", "text": "爆炸 现场 救援"},
+            {"source": "新浪7x24", "time": "2026-09-09 09:02",
+             "title": "半导体设备板块走强 龙头涨停", "text": "芯片设备 涨停"},
+        ]
+        old_collect = nm._collect_all
+        nm._collect_all = lambda: items
+        old_learned = nm.learned_extra
+        nm.learned_extra = lambda: {}
+        try:
+            obj = nm.fetch_news(amplitude=8, cfg=None)
+        finally:
+            nm._collect_all = old_collect
+            nm.learned_extra = old_learned
+        self.assertEqual(obj["raw"], 3)
+        self.assertEqual(obj["screened_out"], 1)  # 火车站爆炸被预筛
+        titles = [e["title"] for e in obj["feed"]]
+        self.assertIn("央行开展逆回购操作 维护流动性合理充裕", titles)
+        self.assertNotIn("某地火车站发生爆炸 造成人员受伤", titles)
+
+    def test_norm_title(self):
+        from fundai import screening
+        self.assertEqual(screening.norm_title("央行降准0.5个百分点！？ "),
+                         "央行降准05个百分点")
+
+    def test_ingest_skip_recent_duplicate(self):
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        d1 = [{"id": "a1", "title": "央行降准0.5个百分点 释放长期资金",
+               "text": "央行 降准", "auto_label": "bull", "auto_strength": 1,
+               "source": "x", "time": "10:00"}]
+        n1 = scr.ingest_feed("2026-09-08", d1, skip_recent=True)
+        # 次日同样标题（滚动重播）→ 跳过
+        d2 = [{"id": "a2", "title": "央行降准0.5个百分点 释放长期资金",
+               "text": "央行 降准", "auto_label": "bull", "auto_strength": 1,
+               "source": "x", "time": "09:00"}]
+        n2 = scr.ingest_feed("2026-09-09", d2, skip_recent=True)
+        self.assertEqual(n1, 1)
+        self.assertEqual(n2, 0)
+        self.assertEqual(len(scr.items_for("2026-09-08")), 1)
+        self.assertEqual(len(scr.items_for("2026-09-09")), 0)
+        # 同一条目重拉（force 刷新）→ 允许更新
+        n3 = scr.ingest_feed("2026-09-08", d1, skip_recent=True)
+        self.assertEqual(n3, 1)
+        scr.close()
+
+    def test_news_score_cap(self):
+        from fundai.engine import combine_score
+        cfg = settings.load_config()
+        cfg.setdefault("strategy", {})["news_score_cap"] = 25
+        self.assertEqual(combine_score(cfg, 0, 64), 9)   # 64 被限到 25：25*0.35≈9
+        self.assertEqual(combine_score(cfg, 0, 8), 3)     # 8*0.35=2.8 → 3
+        self.assertEqual(combine_score(cfg, 0, -100), -9)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

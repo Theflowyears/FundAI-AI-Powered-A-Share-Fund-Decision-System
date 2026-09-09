@@ -42,10 +42,18 @@ SECTOR_PROXIES = [
 
 
 def combine_score(cfg, tech, news_score):
-    """量化分(tech) 与 消息分(news) 按 news_weight 权重合成最终评分。"""
-    w = float((cfg.get("strategy", {}) or {}).get("news_weight", 0.35))
+    """量化分(tech) 与 消息分(news) 按 news_weight 权重合成最终评分。
+
+    消息分先按 strategy.news_score_cap（默认 ±25）限幅：词典/人工打分最远可到 ±100，
+    若不限幅会凭 ±几十分的消息面单方向撬动 ±11pp+ 的权益仓位（audit P1-11）。
+    """
+    st = cfg.get("strategy", {}) or {}
+    w = float(st.get("news_weight", 0.35))
     if news_score is None:
         return int(round(tech))
+    cap = float(st.get("news_score_cap", 25) or 25)
+    if cap > 0:
+        news_score = util.clamp(float(news_score), -cap, cap)
     return int(round(tech * (1.0 - w) + float(news_score) * w))
 
 

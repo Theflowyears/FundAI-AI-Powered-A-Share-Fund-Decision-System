@@ -79,6 +79,7 @@ class Market:
         self._zt_calls = {}   # date -> 智兔调用次数
         self._ak_calls = {}   # date -> akshare 调用次数
         self._ak_ok = None
+        self._ak_fail_streak = 0   # akshare 连续瞬时失败计数（>=4 才永久停用）
         self._zt_limit = int(self.data_cfg.get("zhitu_daily_limit", 200) or 200)
         self._idx_quote = None      # 指数实时行情缓存
         self._idx_quote_ts = 0.0
@@ -148,19 +149,34 @@ class Market:
         self._zt_calls[today] = self._zt_calls.get(today, 0) + 1
         return js
     def _ak_nav_items(self, code):
-        """AKShare 场外基金全量净值 -> {date: nav}。"""
+        """AKShare 场外基金全量净值 -> {date: nav}。
+
+        区分“模块级故障”（未安装/接口字段消失 → 当天停用并直连兜底）与
+        “单次网络抖动”（允许本次失败并尝试通道链里的下一家；连续失败才停用）。
+        """
         try:
             import akshare as ak
         except Exception as e:
-            raise DataError("AKShare 未安装或导入失败：{}".format(e))
+            self._ak_ok = False
+            raise DataError("AKShare 未安装或导入失败（已停用）：{}".format(
+                str(e)[:150]))
         if self._ak_ok is False:
-            raise DataError("AKShare 模块异常，已停用")
+            raise DataError("AKShare 模块异常/连续失败，已停用（走智兔/东财兜底）")
         try:
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-        except Exception as e:
+        except ImportError:
             self._ak_ok = False
-            raise DataError("AKShare 基金净值失败({})：{}".format(code, str(e)[:150]))
+            raise DataError("AKShare 接口实现缺失（已停用）：{}".format(code))
+        except Exception as e:
+            self._ak_fail_streak += 1
+            if self._ak_fail_streak >= 4:
+                self._ak_ok = False
+                raise DataError("AKShare 连续 {} 次失败，已停用（走智兔/东财兜底）：{}".format(
+                    self._ak_fail_streak, str(e)[:150]))
+            raise DataError("AKShare 基金净值瞬时失败({}/4，自动重试兜底通道)：{}：{}".format(
+                self._ak_fail_streak, code, str(e)[:150]))
         self._ak_ok = True
+        self._ak_fail_streak = 0
         self._count("akshare")
         date_col = next((c for c in ("净值日期", "date") if c in df.columns), None)
         nav_col = next((c for c in ("单位净值", "unit_nav") if c in df.columns), None)

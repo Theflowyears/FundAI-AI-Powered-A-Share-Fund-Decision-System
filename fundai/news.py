@@ -135,16 +135,25 @@ def fetch_news(amplitude=8, cfg=None, pool=None):
     """返回 {ok, items, feed, bull, bear, net, score, amplitude}。
 
     feed 为全量已打标消息（供人工筛选界面）；bull/bear 为 Top 摘要（供研判文案）。
+    打标前清洗：相关性预筛（与金融行情明显无关的快讯不进入待打标队列，
+    避免用户给“战事/外交/生活”噪音打标）；最终去重由入库层的近 7 天归一化标题
+    过滤完成（screening.ingest_feed skip_recent）。
     失败抛 DataError。
     """
     items = _collect_all()
     extra = learned_extra()
     pool_list = pool if pool is not None else settings.pool_of(cfg) if cfg else []
+    raw_n = len(items)
     feed = []
+    screened_out = 0
     for it in items:
         txt = (it.get("title") or "") + " " + (it.get("text") or "")
         sc = lexicon.score_text(txt, extra=extra)
         themes = _theme_links(txt)
+        # 相关性预筛：无市场名词/硬宏观词、未命中任何板块主题、且零情绪 → 无关噪音
+        if not sc.get("relevance") and not themes and sc.get("strength") == 0:
+            screened_out += 1
+            continue
         entry = {
             "id": _item_id(it),
             "source": it.get("source", ""),
@@ -174,7 +183,8 @@ def fetch_news(amplitude=8, cfg=None, pool=None):
     score = int(max(-100, min(100, net * max(1, int(amplitude)))))
     bull.sort(key=lambda x: x.get("time", ""), reverse=True)
     bear.sort(key=lambda x: x.get("time", ""), reverse=True)
-    return {"ok": True, "items": len(feed), "feed": feed,
+    return {"ok": True, "items": len(feed), "raw": raw_n,
+            "screened_out": screened_out, "feed": feed,
             "bull": bull[:5], "bear": bear[:5],
             "net": net, "score": score, "amplitude": int(amplitude)}
 
