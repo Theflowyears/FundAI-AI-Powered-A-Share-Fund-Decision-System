@@ -732,6 +732,54 @@ class Market:
         seq = self.index_history()
         return seq[-1] if seq else (None, None, None)
 
+    def extend_index_history(self, years=8, with_benchmarks=False):
+        """把主基准指数的历史K线缓存一次性向前延伸到 years 年（≈1 次智兔全区间请求）。
+
+        与 BaoStock 免费历史行情的等价实现：本工程无强依赖，直接复用
+        智兔/东财的“按区间全量取日K”接口写入本地缓存，供长周期回测/统计语境使用。
+        返回 {source, bars, start, end}。
+        """
+        start = util.add_days(util.today_str(), -(int(years) * 365 + 10))
+        key = self._index_key()
+        path = self._kline_cache_path(key)
+        cache = util.load_json(path, {"items": {}})
+        items = dict(cache.get("items", {}))
+        src = "cache"
+        try:
+            rows = self._zt_index_history(start, util.add_days(util.today_str(), 1))
+            src = "zhitu"
+        except DataError as e:
+            self.warnings.append("智兔长历史失败，尝试东财：{}".format(e))
+            secid = (self.cfg.get("market", {}).get("index", {})
+                     or {}).get("eastmoney_secid")
+            seq = self._em_index_history(secid, start)
+            items = {d: [c, v] for d, c, v in seq}
+            src = "eastmoney"
+        else:
+            for d, c, v in rows:
+                items[d] = [c, v]
+        util.save_json(path, {"updated": util.now_iso(), "items": items})
+        self._register_calendar(items)
+        ks = sorted(items)
+        res = {"source": src, "bars": len(items),
+               "start": ks[0] if ks else None, "end": ks[-1] if ks else None}
+        if with_benchmarks:
+            em_secids = []
+            for it in self._indices_cfg():
+                s = str(it.get("secid") or "")
+                if s and s not in em_secids:
+                    em_secids.append(s)
+            for s in em_secids:
+                try:
+                    seq = self._em_index_history(s, start)
+                    if seq:
+                        res.setdefault("benchmarks", {})[s] = {
+                            "bars": len(seq), "start": seq[0][0],
+                            "end": seq[-1][0]}
+                except DataError:
+                    continue
+        return res
+
     def probe_online(self):
         if self._probe is not None:
             return self._probe
