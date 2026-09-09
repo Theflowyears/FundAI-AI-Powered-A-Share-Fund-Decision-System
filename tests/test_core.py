@@ -243,14 +243,19 @@ class KlineFinalBarTest(unittest.TestCase):
 class TermLearningTest(unittest.TestCase):
     def test_fin_terms_sanity(self):
         from fundai import lexicon
-        self.assertGreater(len(lexicon.FIN_TERMS), 200)
+        self.assertGreater(len(lexicon.FIN_TERMS), 300)
         # 关键术语必须存在
-        for t in ("降准", "固态电池", "半导体", "回购", "北向资金"):
+        for t in ("降准", "固态电池", "半导体", "回购", "北向资金",
+                  "临时停牌", "二级市场", "参考净值", "溢价", "风险提示"):
             self.assertIn(t, lexicon.FIN_TERMS)
-        # 术语化判定：术语本身/紧凑扩展通过，无关碎片不通过
-        self.assertTrue(lexicon.termness("降准"))
-        self.assertTrue(lexicon.termness("固态电池装车"))   # 扩展 ≤2 字
-        self.assertFalse(lexicon.termness("慈善基金会"))     # “基金”长出 3 字
+        # 术语化判定（v3 严格版）：只收完整术语；任何滑动窗碎片都不收
+        self.assertTrue(lexicon.termness("停牌"))
+        self.assertTrue(lexicon.termness("临时停牌"))
+        self.assertTrue(lexicon.termness("基金份额"))
+        self.assertFalse(lexicon.termness("基金二级市场"))   # 滑动窗碎片
+        self.assertFalse(lexicon.termness("盘时基金份额参"))
+        self.assertFalse(lexicon.termness("幅度溢价"))
+        self.assertFalse(lexicon.termness("慈善基金会"))
         self.assertFalse(lexicon.termness("火车站广场"))
 
     def test_learn_only_fin_terms(self):
@@ -361,6 +366,17 @@ class NewsCleanTest(unittest.TestCase):
         a = "央行开展五千亿元规模的逆回购操作以维护银行体系流动性合理充裕"
         b = "卫星互联网龙头公司斩获批量订单产业链迎来放量期"
         self.assertFalse(screening.ScreeningStore._fuzzy_dup([a], b, 0.93))
+
+    def test_review_split_caps_at_50(self):
+        from fundai import screening
+        mk = lambda i, a, u="": {"item_id": i, "auto_label": a, "user_label": u}
+        items = [mk(str(i), "neutral") for i in range(60)] + \
+                [mk("b1", "bull"), mk("b2", "bear"), mk("d1", "bull", "bull")]
+        top, extra, ai, done = screening.ScreeningStore.review_split(items, 50)
+        self.assertEqual(len(top), 50)
+        self.assertEqual(len(extra), 10)
+        self.assertEqual(len(ai), 2)
+        self.assertEqual(len(done), 1)
 
     def test_news_score_cap(self):
         from fundai.engine import combine_score

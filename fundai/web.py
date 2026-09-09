@@ -19,6 +19,10 @@ BACKTEST_FILE = util.data_file("backtest_last.json")
 
 ALLOWED_STATIC = {"index.html", "app.js", "style.css", "vendor/echarts.min.js"}
 
+# 人工打标额度：每天最多挑这么多“AI 无法确定(中性)”的消息给用户确认，
+# 其余方向明确(利好/利空)的消息直接采用 AI 判断，减少人工负担（audit 迭代）。
+MAX_REVIEW_QUEUE = 50
+
 
 class ApiApp:
     """共享给所有请求的上下文（含线程安全的 SQLite 连接）。"""
@@ -63,16 +67,25 @@ class ApiApp:
         nmap = {}
         for f in self.engine._pool_items():
             nmap[f["code"]] = f.get("name") or f["code"]
-        items = scr.items_for(date_s)
-        # 打标前体验：未打标(待你复核)的排在最前，已打标的垫底（组内保持时间倒序）
-        items.sort(key=lambda r: 0 if not (r.get("user_label") or "") else 1)
-        todo_n = sum(1 for r in items if not (r.get("user_label") or ""))
+        items = scr.items_for(date_s)  # 时间倒序
+        # 分流（打标前一轮筛选）：见 screening.review_split——
+        #   to_review   = AI 无法确定方向(中性)且未打标 → 人工额度（最多 50）
+        #   ai_accepted = AI 方向明确(利好/利空)且未打标 → 直接采用 AI，不占额度
+        review_head, neutral_extra, ai_head, done = \
+            screening.ScreeningStore.review_split(items, MAX_REVIEW_QUEUE)
+        todo_ids = {r["item_id"] for r in review_head}
+        ordered = review_head + neutral_extra + ai_head + done
         feed = []
-        for r in items:
+        for r in ordered:
             d = dict(r)
             # 前端打标按钮用 it.id（见 app.js renderNews）；SQLite 行主键叫 item_id，
             # 这里补一个 id 别名，避免前端提交 “undefined” 导致打标 500。
             d["id"] = d.get("item_id") or d.get("id") or ""
+            d["needs_review"] = not d.get("user_label") and \
+                d.get("item_id") in todo_ids
+            d["ai_decided"] = not d.get("user_label") and \
+                d.get("item_id") not in todo_ids and \
+                (d.get("auto_label") or "neutral") != "neutral"
             d["funds_links"] = [{"code": c, "name": nmap.get(c, c)}
                                 for c in (d.get("funds") or [])]
             feed.append(d)
@@ -92,8 +105,10 @@ class ApiApp:
             "date": date_s,
             "feed": feed,
             "feed_count": len(items),
-            "todo": todo_n,          # 待你打标（未打标）条数
-            "done": len(items) - todo_n,
+            "todo": len(review_head),        # 待你人工确认（≤MAX_REVIEW_QUEUE）
+            "review_extra": len(neutral_extra),  # 超出额度未排入优先的中性条数
+            "ai_accepted": len(ai_head),     # 直接采用 AI 判断（利好/利空明确）
+            "done": len(done),
             "auto_score": auto_score, "auto_net": auto_net,
             "human": human,
             "labels": labels,

@@ -113,8 +113,9 @@
       <h3>📰 每日消息广域筛选 · 让算法学会你的判断</h3>
       <div class="mut small" style="margin:4px 0 10px">
         每天收盘后：先点【拉取今日消息】（东财+新浪多源，逐条自动打标并与备选基金联动）→
-        你只需在下方列表<b>标记每条消息的价值并过滤</b>（利好/利空/中性/重大利好/重大利空/与市场无关）→
-        算法把打标结果<b>学成词典词</b>，此后自动打分自动带上你教会的词。
+        AI 已直接采纳方向明确的利好/利空；你只需在下方<b>“待确认”里挑 AI 没把握（中性）的最多 50 条</b>
+        复核打标（利好/利空/中性/重大利好/重大利空/与市场无关）→
+        算法把打标结果<b>学成完整金融术语词</b>，此后自动打分自动带上你教会的词。
         <b>次日大盘方向由 AI 自动研判并自检命中率，不需要你来预测。</b>
       </div>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
@@ -137,7 +138,7 @@
           <div class="sub" id="nLabels">尚未打标</div></div>
         <div class="card"><div class="k">今日打标进度</div>
           <div class="v small" id="nProgress">—</div>
-          <div class="sub">打标越多，算法越懂你</div></div>
+          <div class="sub">确认 ≤50 条最不确定的消息即可，其余自动采用 AI 判断</div></div>
       </div>
     </div>
 
@@ -169,7 +170,8 @@
       <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px">
         <span class="mut small">过滤：</span>
         <button class="chip on" data-nf="all">全部</button>
-        <button class="chip" data-nf="unrated">未打标</button>
+        <button class="chip" data-nf="unrated">待确认</button>
+        <button class="chip" data-nf="auto">AI已采纳</button>
         <button class="chip" data-nf="bull">利好</button>
         <button class="chip" data-nf="bear">利空</button>
         <button class="chip" data-nf="neutral">中性</button>
