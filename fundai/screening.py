@@ -77,6 +77,9 @@ class ScreeningStore:
                 funds TEXT DEFAULT '[]',
                 auto_label TEXT DEFAULT '',
                 auto_strength REAL DEFAULT 0,
+                auto_net REAL DEFAULT 0,
+                event_type TEXT DEFAULT '',
+                auto_reason TEXT DEFAULT '',
                 user_label TEXT DEFAULT '',
                 user_strength REAL DEFAULT 0,
                 rated_at TEXT,
@@ -100,8 +103,45 @@ class ScreeningStore:
                 updated TEXT
             );
             """)
+        # 兼容旧库：为 items 补新增列（event_type/auto_reason/auto_net）
+        icols = [r["name"] for r in self.conn.execute("PRAGMA table_info(items)")]
+        for cname, cdef in (("event_type", "TEXT DEFAULT ''"),
+                            ("auto_reason", "TEXT DEFAULT ''"),
+                            ("auto_net", "REAL DEFAULT 0")):
+            if cname not in icols:
+                self.conn.execute("ALTER TABLE items ADD COLUMN {} {}".format(
+                    cname, cdef))
 
     # ---------------- 消息入库 / 查询 ----------------
+    def reapply_auto(self, date_s):
+        """用最新语义规则重算某日已入库消息的自动标签/事件/依据（不覆盖人工标签）。
+
+        规则升级后无需重新抓取即可让存量行同步新口径（如 ETF 溢价提示 → 产品层面中性）。
+        返回处理的条数。
+        """
+        from . import semantics
+        rows = self.items_for(date_s)
+        n = 0
+        with self.lock:
+            for r in rows:
+                ev = semantics.infer_news(r.get("title") or "",
+                                          r.get("text") or "")
+                evt = ev.get("event") or "dict"
+                if evt == "none":
+                    evt = "dict"
+                with self.conn:
+                    self.conn.execute(
+                        "UPDATE items SET auto_label=?, auto_strength=?, "
+                        "auto_net=?, event_type=?, auto_reason=? WHERE date=? "
+                        "AND item_id=?",
+                        (ev.get("label") or "neutral",
+                         float(ev.get("strength") or 0),
+                         float(ev.get("strength") or 0),
+                         evt, (ev.get("reason") or "")[:400],
+                         date_s, r["item_id"]))
+                n += 1
+        return n
+
     def recent_title_keys(self, asof_date_s=None, days=RECENT_TITLE_DAYS):
         """近 days 天（含当日）已入库标题的归一化键集合，用于打标前清洗去重。"""
         asof_date_s = asof_date_s or util.today_str()
@@ -196,13 +236,16 @@ class ScreeningStore:
                 with self.conn:
                     self.conn.execute(
                         "INSERT INTO items(date,item_id,source,time,title,text,url,"
-                        "sectors,funds,auto_label,auto_strength,user_label,user_strength,rated_at) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                        "sectors,funds,auto_label,auto_strength,auto_net,event_type,"
+                        "auto_reason,user_label,user_strength,rated_at) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                         "ON CONFLICT(date,item_id) DO UPDATE SET "
                         "source=excluded.source,time=excluded.time,title=excluded.title,"
                         "text=excluded.text,url=excluded.url,sectors=excluded.sectors,"
                         "funds=excluded.funds,auto_label=excluded.auto_label,"
-                        "auto_strength=excluded.auto_strength,user_label=excluded.user_label,"
+                        "auto_strength=excluded.auto_strength,auto_net=excluded.auto_net,"
+                        "event_type=excluded.event_type,auto_reason=excluded.auto_reason,"
+                        "user_label=excluded.user_label,"
                         "user_strength=excluded.user_strength,rated_at=excluded.rated_at",
                         (date_s, item_id, it.get("source") or "",
                          it.get("time") or "", it.get("title") or "",
@@ -210,6 +253,9 @@ class ScreeningStore:
                          json.dumps(it.get("sectors") or [], ensure_ascii=False),
                          json.dumps(it.get("funds") or [], ensure_ascii=False),
                          it.get("auto_label") or "", float(it.get("auto_strength") or 0),
+                         float(it.get("auto_net") or 0),
+                         it.get("event_type") or "",
+                         (it.get("auto_reason") or "")[:400],
                          user_label, user_strength, rated_at))
                 if recent_keys is not None and key:
                     recent_keys.add(key)
@@ -288,10 +334,14 @@ class ScreeningStore:
         样本足够时才进入词表，并同时让“中性/混杂”样本压制明显噪音。
         """
         rows = self.conn.execute(
-            "SELECT title,text,user_label FROM items WHERE user_label!='' "
-            "AND user_label!='irrelevant'").fetchall()
+            "SELECT title,text,user_label,event_type FROM items "
+            "WHERE user_label!='' AND user_label!='irrelevant'").fetchall()
         counts = {}  # word -> [bull, bear, neutral, docs]
         for r in rows:
+            # ETF 场内溢价/临停等“产品层面风险提示”不是大盘/板块方向信号，
+            # 其模板句容易让算法误学（如“收盘价/临时停牌→利空”），不参与学习
+            if r["event_type"] == "fund_premium_warning":
+                continue
             lab = r["user_label"]
             txt = "{} {}".format(r["title"] or "", r["text"] or "")
             words = set(lexicon.token_candidates(txt))

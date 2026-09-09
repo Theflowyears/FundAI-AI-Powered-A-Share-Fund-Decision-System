@@ -1011,9 +1011,11 @@ function renderNewsFeed() {
         data-rate="${it.id}" data-label="${k}">${LABEL_TXT[k]}</button>`).join("");
     const flagPill = it.needs_review
       ? `<span class="pill" style="color:#f7b731;border-color:rgba(247,183,49,.6)">待你确认</span>`
-      : (autoOnly && it.ai_decided
-          ? `<span class="pill" style="color:#4adf9a;border-color:rgba(33,191,115,.5)">AI 已自动采纳${autoSign}${autoTxt}</span>`
-          : (autoOnly && unlabeled ? `<span class="pill" style="color:#8d99ae">超出额度·按AI中性</span>` : ""));
+      : (autoOnly && it.auto_handled
+          ? `<span class="pill" style="color:#8d99ae;border-color:rgba(141,153,174,.6)" title="场内溢价/临时停牌属基金产品层面提示，不代表 A 股大盘方向">产品风险提示·AI判中性</span>`
+          : (autoOnly && it.ai_decided
+              ? `<span class="pill" style="color:#4adf9a;border-color:rgba(33,191,115,.5)">AI 已自动采纳${autoSign}${autoTxt}</span>`
+              : (autoOnly && unlabeled ? `<span class="pill" style="color:#8d99ae">超出额度·按AI中性</span>` : "")));
     return `<div class="feed-item lab-${lab === "irrelevant" ? "neutral" : lab}">
       <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap">
         <span class="pill">${esc(it.time || "")} ${esc(it.source || "")}</span>
@@ -1024,6 +1026,7 @@ function renderNewsFeed() {
       </div>
       <div style="margin:4px 0; font-weight:600; line-height:1.5">${esc(it.title || "")}</div>
       ${it.text && it.text !== it.title ? `<div class="mut small clamp2" style="margin-bottom:4px">${esc(it.text)}</div>` : ""}
+      ${it.auto_reason ? `<div class="mut small" style="margin:0 0 6px;color:#7d8aa0">💡 AI 依据：${esc(it.auto_reason)}</div>` : ""}
       <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center">
         <span class="mut small">我的判断：</span>
         ${autoOnly && unlabeled
