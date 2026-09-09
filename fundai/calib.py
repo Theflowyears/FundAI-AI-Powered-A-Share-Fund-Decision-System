@@ -40,12 +40,21 @@ def _conn():
     return c
 
 
-def load_closes(cfg=None):
-    """从本地长K线缓存读 {date: close}（不触发网络；需先 fetch-history 延伸）。"""
+def load_closes(cfg=None, refresh=False):
+    """从本地长K线缓存读 {date: close}（不触发网络；需先 fetch-history 延伸）。
+
+    refresh=True：先走一次 Market.index_history()（仅在当日 bar 缺失/为盘中快照时
+    才会在线拉一次收盘bar），保证结算时能拿到“今日收盘”。
+    """
     from .datasource import Market
     from . import settings
     cfg = cfg or settings.load_config()
     mkt = Market(cfg)
+    if refresh:
+        try:
+            mkt.index_history()
+        except Exception:
+            pass
     path = mkt._kline_cache_path(mkt._index_key())
     cache = util.load_json(path, {"items": {}})
     items = cache.get("items") or {}

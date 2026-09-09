@@ -254,7 +254,7 @@ def cmd_signals_update(args):
     """把近期已入库消息结算成“消息→下一交易日涨跌”样本（幂等）。"""
     from fundai import calib, screening, util
     scr = screening.ScreeningStore()
-    closes, dates = calib.load_closes()
+    closes, dates = calib.load_closes(refresh=True)  # 20:30 跑：先确保今日收盘在缓存里
     lo = util.add_days(util.today_str(), -(max(3, int(args.days)) * 2))
     ds_list = [r[0] for r in scr.conn.execute(
         "SELECT DISTINCT date FROM items WHERE date>=?", (lo,))]
