@@ -168,6 +168,16 @@
     </div>
 
     <div class="panel">
+      <h3>📊 事件命中率校准 <span class="mut small" style="font-weight:normal">（消息 → 下一交易日沪深300 · 逐日自动积累）</span>
+        <span class="spacer"></span>
+        <button id="btnExtendHist" class="btn small" title="把主指数历史K线延伸并写本地缓存（1 次在线请求）">↻ 延伸历史(8年)</button>
+        <button id="btnRefreshCalib" class="btn small">刷新</button>
+      </h3>
+      <div class="mut small" style="margin:2px 0 8px" id="calibSub">—</div>
+      <div id="calibBox"><div class="mut">暂无校准数据。每个交易日 20:30 自动结算后这里会显示每类事件的命中率。</div></div>
+    </div>
+
+    <div class="panel">
       <h3>🗞 今日消息逐条筛选
         <span class="mut small" style="font-weight:normal">（红=利好 绿=利空 灰=中性/无关；点右侧按钮覆盖自动判断）</span>
       </h3>
