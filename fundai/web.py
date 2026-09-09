@@ -142,6 +142,34 @@ class ApiApp:
             self.screen.ingest_feed(date_s, news_obj.get("feed") or [])
         return news_obj
 
+    # ---------------- 事件命中率校准 & 历史数据状态（可视化） ----------------
+    def calibration_payload(self):
+        """消息→次日涨跌 样本统计 + 主指数历史缓存状态 + 最近结算日志尾部。"""
+        from . import calib
+        rep = {"total": 0, "by_event": {}}
+        try:
+            rep = calib.report(cfg=self.cfg)
+        except Exception as e:
+            rep = {"total": 0, "by_event": {}, "error": str(e)[:150]}
+        hist = {}
+        try:
+            _closes, dates = calib.load_closes(cfg=self.cfg)
+            hist = {"bars": len(dates),
+                    "start": dates[0] if dates else None,
+                    "end": dates[-1] if dates else None}
+        except Exception:
+            hist = {"bars": 0}
+        tail = []
+        try:
+            p = util.data_file("signals_update.log")
+            if p.exists():
+                raw = p.read_text("utf-8", errors="replace")
+                tail = [ln for ln in raw.strip().splitlines() if ln.strip()][-6:]
+        except Exception:
+            tail = []
+        return {"report": rep, "history": hist, "last_run": tail,
+                "next_auto": "每交易日 20:30 自动结算（计划任务 fundai_daily_signals）"}
+
     # ---------------- 指令操作 ----------------
     def manual_fill(self, payload):
         oid = payload.get("id")
@@ -300,6 +328,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/news/dirstats":
             self._json({"ok": True,
                         "stats": self.app.screen.direction_stats(400)})
+        elif path == "/api/calibration":
+            self._json({"ok": True, "cal": self.app.calibration_payload()})
         else:
             self._err("404 not found: " + path, 404)
 
@@ -462,6 +492,19 @@ class Handler(BaseHTTPRequestHandler):
                                    "payload": app.news_payload(date_s)})
             except ValueError as e:
                 return self._err(str(e))
+        elif path == "/api/history/extend":
+            if app.demo:
+                return self._err("演示库只读，无需延伸历史")
+            if not app._busy.acquire(blocking=False):
+                return self._err("系统忙，请稍候", 409)
+            try:
+                years = int(body.get("years") or 8)
+                res = app.market.extend_index_history(years=years)
+                return self._json({"ok": True, "result": res})
+            except Exception as e:
+                return self._err("历史延伸失败：" + str(e))
+            finally:
+                app._busy.release()
         elif path == "/api/news/direction":
             # (已停用：方向判断由 AI 自动记录，不再要求用户输入)
             return self._err("方向判断已由 AI 自动记录，无需手动保存", 400)

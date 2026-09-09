@@ -939,6 +939,7 @@ async function loadNewsTab(dateS) {
     const j = await api("/api/news/screen?date=" + encodeURIComponent(d));
     NEWS = j.news;
     renderNews();
+    loadCalibration(false);
   } catch (e) { toast("消息数据加载失败：" + e.message, "err"); }
 }
 
@@ -1064,6 +1065,72 @@ $("nFeedList").addEventListener("click", async (ev) => {
 });
 
 $("btnNewsGo").onclick = () => loadNewsTab($("nDate").value || todayStrLocal());
+
+/* ---------- 事件命中率校准（消息→次日大盘）可视化 ---------- */
+let CAL = null;
+const CAL_EVN = {
+  cbank_ease: "央行宽松", cbank_tight: "货币收紧", geo_conflict: "地缘冲突",
+  earnings: "公司业绩", holder_flow: "股东增减持/监管",
+  market_policy: "宏观/资本市场政策", industry_policy: "产业政策",
+  eco_data: "经济数据", fund_premium_warning: "ETF产品风险提示",
+  dict: "词典兜底",
+};
+async function loadCalibration(quiet) {
+  try {
+    const j = await api("/api/calibration");
+    CAL = j.cal || null;
+    renderCalibration();
+  } catch (e) { if (!quiet) toast("校准数据加载失败：" + e.message, "err"); }
+}
+function fmtPctS(x) {
+  return (x == null) ? "—" : ((x >= 0 ? "+" : "") + (x * 100).toFixed(1) + "%");
+}
+function renderCalibration() {
+  const sub = $("calibSub"), box = $("calibBox");
+  if (!CAL) { if (sub) sub.textContent = "—"; return; }
+  const rep = CAL.report || {}; const hist = CAL.history || {};
+  if (sub) {
+    sub.innerHTML = "已结算样本 <b>" + (rep.total || 0) + "</b> 条 · 主指数历史缓存 " +
+      (hist.bars || 0) + " 根（" + esc(hist.start || "—") + " → " + esc(hist.end || "—") + "）<br>" +
+      esc(CAL.next_auto || "");
+  }
+  const evs = Object.entries(rep.by_event || {}).sort((a, b) => b[1].n - a[1].n);
+  if (!box) return;
+  if (!evs.length) {
+    box.innerHTML = `<div class="mut">暂无已结算样本：每个交易日 20:30 自动结算后这里会出表；
+      财联社历史电报可用 <code>python app.py cls-import --file x.json --date 2026-09-08</code> 导入以提前积累。</div>`;
+    return;
+  }
+  box.innerHTML = `<table style="width:100%"><thead><tr>
+    <th>事件类型</th><th>样本</th><th>利多/利空/中性</th><th>命中</th><th>命中率</th><th>平均次日涨跌</th>
+    </tr></thead><tbody>` + evs.map(([k, a]) => {
+    const rate = a.hit_rate;
+    const cls = rate == null ? "" : (rate >= 0.55 ? "up" : rate <= 0.45 ? "down" : "");
+    return `<tr>
+      <td>${esc(CAL_EVN[k] || k)}</td>
+      <td>${a.n}</td>
+      <td class="mut small">${a.bull || 0}/${a.bear || 0}/${a.neutral || 0}</td>
+      <td>${a.hit || 0}</td>
+      <td class="${cls}">${rate == null ? "—" : fmtPct0(rate)}</td>
+      <td>${fmtPctS(a.avg_chg)}</td></tr>`;
+  }).join("") + `</tbody></table>
+  <div class="mut small" style="margin-top:6px">命中口径：利多→次日沪深300 上涨 &gt;0.3%、利空→下跌 &gt;0.3%、中性→|涨跌|≤0.3%；样本越多越可信，命中率明显偏离 50% 的方向可据此微调语义规则强度。</div>`;
+}
+$("btnRefreshCalib").onclick = () => { loadCalibration(false); toast("已刷新校准数据", "ok"); };
+$("btnExtendHist").onclick = async () => {
+  const btn = $("btnExtendHist");
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "延伸中…";
+  try {
+    const r = await api("/api/history/extend", { method: "POST", body: { years: 8 } });
+    if (!r.ok) throw new Error(r.message || "延伸失败");
+    toast("主指数历史已延伸：" + (r.result?.start || "—") + " → " + (r.result?.end || "—") +
+      "（" + (r.result?.bars || 0) + " 根，source=" + (r.result?.source || "") + "）", "ok");
+    loadCalibration(true);
+  } catch (e) { toast("延伸失败：" + e.message, "err"); }
+  finally { btn.disabled = false; btn.textContent = old; }
+};
 $("btnNewsPull").onclick = async () => {
   const btn = $("btnNewsPull");
   btn.disabled = true; btn.textContent = "拉取中（东财+新浪）…";
