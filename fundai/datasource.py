@@ -19,6 +19,7 @@
 """
 import json
 import re
+import threading
 import time
 from datetime import datetime
 from urllib.parse import quote
@@ -52,6 +53,37 @@ QUOTE_FRESH_TTL = 120  # 指数实时行情缓存秒数（>前端 60s 轮询，�
 
 # 收盘价确认时刻：当天 15:05 之后抓到的指数K线才算“已收盘完整bar”
 CLOSE_TIME = "15:05"
+
+# ---- AKShare 安全探测（避免把不稳定的 V8/py_mini_racer 依赖 import 进长驻服务） ----
+_AK_STATE = {"checked": False, "ok": True}
+_AK_LOCK = threading.Lock()
+
+
+def probe_akshare_safe():
+    """用子进程探测 akshare 能否安全 import（子进程崩了不伤宿主服务）。
+
+    FUNDAI_NO_AKSHARE=1 可直接禁用（走智兔/东财）。
+    返回 True=可用。探测结果影响 Market._nav_chain。
+    """
+    import os
+    with _AK_LOCK:
+        if _AK_STATE["checked"]:
+            return _AK_STATE["ok"]
+        _AK_STATE["checked"] = True
+        if os.environ.get("FUNDAI_NO_AKSHARE", "") in ("1", "true", "yes"):
+            _AK_STATE["ok"] = False
+            return False
+        import subprocess
+        import sys
+        code = ("import akshare\nprint('AK_OK')\n")
+        try:
+            r = subprocess.run([sys.executable, "-c", code],
+                               capture_output=True, timeout=60)
+            ok = bool(r and r.returncode == 0 and b"AK_OK" in (r.stdout or b""))
+        except Exception:
+            ok = False
+        _AK_STATE["ok"] = ok
+        return ok
 
 
 class Market:
@@ -110,9 +142,10 @@ class Market:
         return "东财/天天基金"
 
     def _nav_chain(self):
-        """净值获取通道顺序（成功即停）。"""
+        """净值获取通道顺序（成功即停）。AKShare 仅当子进程探测可用时启用。"""
         chain = []
-        if self.akshare_on:
+        ak_ok = not _AK_STATE["checked"] or _AK_STATE["ok"]
+        if self.akshare_on and ak_ok:
             chain.append("akshare")
         if self.token:
             chain.append("zhitu")

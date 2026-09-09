@@ -487,6 +487,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(cfg, db_path, demo=False, port=None, host=None):
+    # 长驻服务规避 akshare 的 V8 依赖崩溃（akshare 1.18 import 即加载 py_mini_racer）：
+    # 有智兔 token 时净值通道禁用 akshare（智兔每日 200 次 + 缓存足够）；
+    # 无 token 才回退 akshare（子进程探测，崩了不伤宿主）。
+    from . import datasource
+    if (cfg.get("data", {}) or {}).get("zhitu_token"):
+        datasource._AK_STATE.update(checked=True, ok=False)
+    else:
+        datasource.probe_akshare_safe()
     app = ApiApp(cfg, db_path, demo=demo)
     Handler.app = app
     host = host or cfg.get("server", {}).get("host", "127.0.0.1")
