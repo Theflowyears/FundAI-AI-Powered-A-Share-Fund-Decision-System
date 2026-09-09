@@ -129,6 +129,27 @@ def validate(cfg):
             errs.append("pool 基金 %s 的 kind 必须为 equity 或 bond" % f.get("code"))
     if len(codes) != len(set(codes)):
         errs.append("pool 中存在重复基金代码")
+    # 策略参数方向性校验（配置写反了会静默产生反直觉行为，早期报错）
+    st = cfg.get("strategy") or {}
+    if float(st.get("eq_floor", 0)) > float(st.get("eq_cap", 1)):
+        errs.append("strategy.eq_floor({}) 不能大于 eq_cap({})".format(
+            st.get("eq_floor"), st.get("eq_cap")))
+    if float(st.get("eq_slope", 0)) < 0:
+        errs.append("strategy.eq_slope 不能为负")
+    rk = st.get("risk") or {}
+    if float(rk.get("fund_take_profit_pct", 0.1)) > \
+            float(rk.get("fund_take_profit_full_pct", 0.25)):
+        errs.append("strategy.risk.fund_take_profit_pct 不能大于 "
+                    "fund_take_profit_full_pct")
+    if float(rk.get("fund_stop_loss_pct", -0.08)) > 0:
+        errs.append("strategy.risk.fund_stop_loss_pct 应为负值（浮亏比例）")
+    if float(st.get("max_bond_weight", 0.45)) <= 0 or \
+            float(st.get("max_bond_weight", 0.45)) > 1:
+        errs.append("strategy.max_bond_weight 应在 (0,1] 区间")
+    if float(st.get("bond_buy_floor", 0.12)) < 0 or \
+            float(st.get("bond_buy_floor", 0.12)) > \
+            float(st.get("max_bond_weight", 0.45)):
+        errs.append("strategy.bond_buy_floor 应介于 [0, max_bond_weight]")
     if errs:
         raise ValueError("；".join(errs))
 
