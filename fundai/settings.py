@@ -1,0 +1,184 @@
+# -*- coding: utf-8 -*-
+"""配置加载与校验。"""
+import json
+from pathlib import Path
+
+from . import util
+
+CONFIG_PATH = util.PROJECT / "config.json"
+
+DEFAULT_CFG = {
+    "account": {
+        "name": "AI基金1000挑战1500实验",
+        "initial_cash": 1000.0,
+        "target_value": 1500.0,
+        "start_date": None,
+        "end_date": None,
+        "exec_mode": "manual"
+    },
+    "market": {
+        "index": {"name": "沪深300", "zhitu_code": "000300.SH",
+                  "eastmoney_secid": "1.000300"},
+        "indices": [
+            {"name": "上证指数", "secid": "1.000001"},
+            {"name": "深证成指", "secid": "0.399001"},
+            {"name": "创业板指", "secid": "0.399006"},
+            {"name": "沪深300", "secid": "1.000300", "benchmark": True},
+            {"name": "科创50", "secid": "1.000688"},
+            {"name": "中证500", "secid": "1.000905"}
+        ]
+    },
+    "data": {"provider": "zhitu", "zhitu_token": "",
+             "zhitu_daily_limit": 200,
+             "note": "智兔数服：每日200次 / 频率300次每分钟"},
+    "pool": [],
+    "screening": {
+        "enabled": True, "refresh_days": 7, "min_total": 15,
+        "top_equity": 14, "min_history_days": 120,
+        "note": "动态重建备选池：保证>=min_total只，保留当前持仓与债基",
+        "universe": []
+    },
+    "strategy": {
+        "eq_base": 0.6, "eq_slope": 0.005, "eq_floor": 0.1,
+        "eq_cap": 0.95, "regime_step": 0.1, "bond_buy_floor": 0.12,
+        "min_hold_days": 7, "max_bond_weight": 0.35,
+        "mom_window": 20, "rotate_gap": 0.05, "min_order_yuan": 10.0,
+        "news_weight": 0.35, "news_amp": 8,
+        "score_ema_enabled": False, "score_ema_alpha": 0.4,
+        "top_n": 3, "theme_max": 1, "momentum_weight": 0.8,
+        "min_momentum": 0.0, "relative_momentum": False,
+        "risk_adjusted": False, "confidence_shrink": 1.0,
+        "use_fund_convert": True,
+        "factor_weights": {"mom": 0.65, "mom5": 0.15, "vol": 0.20, "bias": 0.0, "heat": 0.0},
+        "risk": {
+            "fund_stop_loss_pct": -0.08,
+            "fund_take_profit_pct": 0.10,
+            "fund_take_profit_full_pct": 0.25,
+            "portfolio_stop_pct": -0.15,
+            "peak_trailing_pct": 0.10,
+            "reentry_score": 25,
+            "rearm_days": 7,
+            "allow_rearm_trade": True,
+            "rearm_bull_score": 50,
+            "allow_early_exit_fee": False
+        }
+    },
+    "fees": {"buy_rate_default": 0.0, "sell_lt7d_default": 0.015,
+             "sell_ge7d_default": 0.0},
+    "llm": {"enabled": False, "provider": "deepseek", "api_key": "",
+            "base_url": "https://api.deepseek.com", "model": "deepseek-chat",
+            "temperature": 0.4},
+    "server": {"host": "127.0.0.1", "port": 8787},
+}
+
+_cache = {"path": None, "mtime": 0, "cfg": None}
+
+
+def _read(path):
+    p = Path(path)
+    if not p.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(DEFAULT_CFG, ensure_ascii=False, indent=2), "utf-8")
+        return json.loads(json.dumps(DEFAULT_CFG))
+    return json.loads(p.read_text("utf-8"))
+
+
+def load_config(path=None):
+    path = str(path or CONFIG_PATH)
+    try:
+        mt = Path(path).stat().st_mtime
+    except OSError:
+        mt = -1
+    c = _cache
+    if c["cfg"] is not None and c["path"] == path and c["mtime"] == mt:
+        return c["cfg"]
+    cfg = _read(path)
+    validate(cfg)
+    _deep_default(cfg, json.loads(json.dumps(DEFAULT_CFG)))
+    c.update(path=path, mtime=mt, cfg=cfg)
+    return cfg
+
+
+def _deep_default(cfg, dft):
+    for k, v in dft.items():
+        if isinstance(v, dict):
+            sub = cfg.setdefault(k, {})
+            _deep_default(sub, v)
+        else:
+            cfg.setdefault(k, v)
+
+
+def validate(cfg):
+    errs = []
+    if not isinstance(cfg, dict):
+        raise ValueError("config.json 格式错误：顶层应为对象")
+    acct = cfg.get("account") or {}
+    if float(acct.get("initial_cash", 0)) <= 0:
+        errs.append("account.initial_cash 必须 > 0")
+    pool = cfg.get("pool") or []
+    if not pool:
+        errs.append("pool 为空：请至少配置一只权益基金与一只债券基金")
+    codes = [f.get("code") for f in pool if f.get("code")]
+    kinds = [f.get("kind") for f in pool if f.get("code")]
+    if "equity" not in kinds:
+        errs.append("pool 中缺少 kind=equity 的基金")
+    if "bond" not in kinds:
+        errs.append("pool 中缺少 kind=bond 的基金（作为防御底仓）")
+    for f in pool:
+        if f.get("kind") not in ("equity", "bond"):
+            errs.append("pool 基金 %s 的 kind 必须为 equity 或 bond" % f.get("code"))
+    if len(codes) != len(set(codes)):
+        errs.append("pool 中存在重复基金代码")
+    if errs:
+        raise ValueError("；".join(errs))
+
+
+def pool_of(cfg):
+    return cfg.get("pool") or []
+
+
+def fund_item(cfg, code):
+    for f in pool_of(cfg):
+        if f.get("code") == code:
+            return f
+    return None
+
+
+def kind_of(cfg, code):
+    it = fund_item(cfg, code)
+    return it.get("kind") if it else "equity"
+
+
+def equity_candidates(cfg):
+    """进攻基金候选（AI 按动量选基的对象）。"""
+    return [f for f in pool_of(cfg) if f.get("kind") == "equity"]
+
+
+def bond_item(cfg):
+    """防御债基：优先 kind=bond 的 primary，否则第一个债基。"""
+    for f in pool_of(cfg):
+        if f.get("kind") == "bond":
+            return f
+    return None
+
+
+def primary_index(cfg):
+    return cfg.get("market", {}).get("index", {})
+
+
+def screening_of(cfg):
+    return cfg.get("screening", {}) or {}
+
+
+def universe_of(cfg):
+    return (cfg.get("screening", {}) or {}).get("universe") or []
+
+
+def public_cfg(cfg):
+    import copy
+    out = copy.deepcopy(cfg)
+    llm = out.setdefault("llm", {})
+    llm["api_key"] = ("***" if llm.get("api_key") else "")
+    d = out.setdefault("data", {})
+    d["zhitu_token"] = ("***" if d.get("zhitu_token") else "")
+    return out

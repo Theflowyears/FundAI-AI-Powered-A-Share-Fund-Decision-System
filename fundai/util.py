@@ -1,0 +1,209 @@
+# -*- coding: utf-8 -*-
+"""通用工具：路径、日期、HTTP、JSON、金额格式化。仅标准库。"""
+import json
+import socket
+import time
+import urllib.error
+import urllib.request
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+PROJECT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT / "data"
+CACHE_DIR = DATA_DIR / "cache"
+DEMO_DIR = DATA_DIR / "demo"
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+TZ_CN = timezone(timedelta(hours=8))
+
+
+class DataError(Exception):
+    """数据源异常（网络/解析）。"""
+
+
+# ---------------- 路径 ----------------
+def ensure_dirs():
+    for d in (DATA_DIR, CACHE_DIR, DEMO_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+def data_file(name):
+    ensure_dirs()
+    return DATA_DIR / name
+
+
+def cache_file(name):
+    ensure_dirs()
+    return CACHE_DIR / name
+
+
+def demo_file(name):
+    ensure_dirs()
+    return DEMO_DIR / name
+
+
+# ---------------- 时间 ----------------
+def now_dt():
+    return datetime.now()
+
+
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def now_iso():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_d(s):
+    if isinstance(s, date):
+        return s
+    return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+
+
+def fmt_d(d):
+    return d.strftime("%Y-%m-%d") if isinstance(d, date) else str(d)[:10]
+
+
+def add_days(s, n):
+    return fmt_d(parse_d(s) + timedelta(days=n))
+
+
+def utc_ms_date(ms):
+    return datetime.fromtimestamp(ms / 1000.0, TZ_CN).strftime("%Y-%m-%d")
+
+
+def is_weekday(s):
+    return parse_d(s).weekday() < 5
+
+
+def trading_days_between(start, end):
+    """按工作日近似交易日（演示/估算用，忽略法定节假日）。"""
+    out, d = [], parse_d(start)
+    e = parse_d(end)
+    while d <= e:
+        if d.weekday() < 5:
+            out.append(fmt_d(d))
+        d += timedelta(days=1)
+    return out
+
+
+def add_trading_days(s, n):
+    """返回 s 之后第 n 个（工作日近似）交易日；n<=0 时返回 s。"""
+    if n <= 0:
+        return fmt_d(parse_d(s))
+    days = trading_days_between(add_days(s, 1), add_days(s, n * 3 + 10))
+    return days[n - 1] if len(days) >= n else days[-1]
+
+
+def prev_trading_day(s):
+    """返回 s 之前最近的一个（工作日近似）交易日（不含 s）。"""
+    days = trading_days_between(add_days(s, -10), add_days(s, -1))
+    return days[-1] if days else fmt_d(parse_d(s))
+
+
+def nav_value_date(submit_at):
+    """场外基金“净值成交日”：当日 15:00 前提交按当日收盘净值，
+    15:00 后提交顺延到下一交易日净值。submit_at 形如 'YYYY-MM-DD HH:MM:SS'。
+    """
+    s = str(submit_at or "")
+    try:
+        dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return s[:10]  # 只有日期 → 当天净值
+    if dt.strftime("%H:%M") < "15:00":
+        return dt.strftime("%Y-%m-%d")
+    return add_trading_days(dt.strftime("%Y-%m-%d"), 1)
+
+
+# ---------------- 数字 ----------------
+def r2(x):
+    return round(float(x) + 1e-9, 2)
+
+
+def r4(x):
+    return round(float(x) + 1e-9, 4)
+
+
+def clamp(x, lo, hi):
+    return max(lo, min(hi, x))
+
+
+def money(x):
+    return "¥{:,}".format(r2(x))
+
+
+def pct2(x):
+    return "{:+.2f}%".format(float(x) * 100)
+
+
+# ---------------- HTTP ----------------
+def http_get(url, headers=None, timeout=12, tries=2):
+    last = None
+    for i in range(max(1, tries)):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", UA)
+            req.add_header("Accept", "*/*")
+            for k, v in (headers or {}).items():
+                req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                socket.timeout, TimeoutError, ConnectionError, OSError) as e:
+            last = e
+            time.sleep(0.8 * (i + 1))
+    raise DataError("请求失败 {}: {}".format(url[:90], last))
+
+
+def http_get_text(url, headers=None, timeout=12, tries=2):
+    b = http_get(url, headers=headers, timeout=timeout, tries=tries)
+    return b.decode("utf-8", errors="replace")
+
+
+def http_get_json(url, headers=None, timeout=12, tries=2):
+    txt = http_get_text(url, headers=headers, timeout=timeout, tries=tries)
+    try:
+        return json.loads(txt)
+    except Exception as e:
+        raise DataError("JSON 解析失败 {}: {}".format(url[:90], e))
+
+
+def http_post_json(url, payload, headers=None, timeout=60, tries=1):
+    data = json.dumps(payload).encode("utf-8")
+    last = None
+    for i in range(max(1, tries)):
+        try:
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("User-Agent", UA)
+            req.add_header("Content-Type", "application/json")
+            for k, v in (headers or {}).items():
+                req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                return json.loads(body)
+        except Exception as e:
+            last = e
+            time.sleep(1.0)
+    raise DataError("POST 失败 {}: {}".format(url[:90], last))
+
+
+# ---------------- JSON 文件 ----------------
+def load_json(path, default=None):
+    p = Path(path)
+    if p.exists():
+        try:
+            return json.loads(p.read_text("utf-8"))
+        except Exception:
+            return default
+    return default
+
+
+def save_json(path, obj):
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(p)
