@@ -64,6 +64,9 @@ class ApiApp:
         for f in self.engine._pool_items():
             nmap[f["code"]] = f.get("name") or f["code"]
         items = scr.items_for(date_s)
+        # 打标前体验：未打标(待你复核)的排在最前，已打标的垫底（组内保持时间倒序）
+        items.sort(key=lambda r: 0 if not (r.get("user_label") or "") else 1)
+        todo_n = sum(1 for r in items if not (r.get("user_label") or ""))
         feed = []
         for r in items:
             d = dict(r)
@@ -89,6 +92,8 @@ class ApiApp:
             "date": date_s,
             "feed": feed,
             "feed_count": len(items),
+            "todo": todo_n,          # 待你打标（未打标）条数
+            "done": len(items) - todo_n,
             "auto_score": auto_score, "auto_net": auto_net,
             "human": human,
             "labels": labels,
