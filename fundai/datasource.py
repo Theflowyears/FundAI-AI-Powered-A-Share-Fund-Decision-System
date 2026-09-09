@@ -48,7 +48,10 @@ TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q={codes}"
 TENCENT_QUOTE_REFERER = "https://stock.qq.com/"
 
 ZT_FRESH_TTL = 900  # 秒
-QUOTE_FRESH_TTL = 45  # 指数实时行情缓存秒数（界面 60s 轮询只读缓存）
+QUOTE_FRESH_TTL = 120  # 指数实时行情缓存秒数（>前端 60s 轮询，界面轮询不消耗配额）
+
+# 收盘价确认时刻：当天 15:05 之后抓到的指数K线才算“已收盘完整bar”
+CLOSE_TIME = "15:05"
 
 
 class Market:
@@ -79,6 +82,23 @@ class Market:
         self._zt_limit = int(self.data_cfg.get("zhitu_daily_limit", 200) or 200)
         self._idx_quote = None      # 指数实时行情缓存
         self._idx_quote_ts = 0.0
+        self._bootstrap_calendar()  # 用本地K线缓存注册交易日历（离线可用）
+
+    # ---------------- 交易日历 ----------------
+    def _register_calendar(self, items):
+        try:
+            util.set_calendar(sorted(items or {}))
+        except Exception:
+            pass
+
+    def _bootstrap_calendar(self):
+        """从本地指数K线缓存注册真实交易日（无网络开销）。"""
+        try:
+            key = self._index_key()
+            cache = util.load_json(self._kline_cache_path(key), {})
+            self._register_calendar(cache.get("items") or {})
+        except Exception:
+            pass
 
     # ---------------- 通道优先级 ----------------
     def provider_label(self):
@@ -295,8 +315,12 @@ class Market:
             seq = [x for x in seq if x[0] >= need_from]
         return seq
 
-    def fund_history(self, code, need_from=None):
-        """升序 [(date, nav)]。按 data.provider 选择通道链，全部失败才用缓存。"""
+    def fund_history(self, code, need_from=None, allow_online=True):
+        """升序 [(date, nav)]。按 data.provider 选择通道链，全部失败才用缓存。
+
+        allow_online=False：只读磁盘缓存（回测/回放用），绝不触发在线请求，
+        历史窗口够用即返回，避免回放烧配额（audit P1-9/P0-3）。
+        """
         if not re.match(r"^\d{6}$", str(code)):
             raise DataError("基金代码格式错误: {}".format(code))
         today = util.today_str()
@@ -312,6 +336,11 @@ class Market:
                 seq = [x for x in seq if x[0] >= need_from]
             return seq
 
+        if not allow_online:
+            if cache_ok:
+                return _serve()
+            raise DataError("基金 {} 本地缓存不足（离线模式，缺 {} 之前数据）".format(
+                code, cache_min or need))
         ttl_ok = self._fresh_ts.get(code, 0) + ZT_FRESH_TTL > time.time()
         # 内存 TTL 未到期 或 磁盘缓存已覆盖最近交易日 → 直接复用，避免服务重启后重复在线拉取
         if cache_ok and (ttl_ok or self._cache_is_fresh(cache)):
@@ -369,6 +398,47 @@ class Market:
     def _kline_cache_path(dm_or_secid):
         safe = re.sub(r"[^0-9A-Za-z]", "_", str(dm_or_secid))
         return util.cache_file("kline_{}.json".format(safe))
+
+    @staticmethod
+    def _bar_is_final(updated):
+        """updated(ISO串) 是否在收盘(15:05)后抓取 —— 当天bar只有收盘后才可信。"""
+        try:
+            upd = datetime.strptime(str(updated or "")[:19], "%Y-%m-%d %H:%M:%S")
+            return upd.strftime("%H:%M") >= CLOSE_TIME
+        except Exception:
+            return False
+
+    @classmethod
+    def _drop_partial_today(cls, items, updated):
+        """把“当天盘中(15:05前)抓到的日内快照bar”从序列剔除 → 用上一交易日收盘。"""
+        items = dict(items or {})
+        if not items:
+            return items
+        today = util.today_str()
+        mx = max(items)
+        if mx != today:
+            return items
+        if util.now_dt().strftime("%H:%M") < CLOSE_TIME:
+            items.pop(mx, None)
+        elif not cls._bar_is_final(updated):
+            items.pop(mx, None)
+        return items
+
+    @staticmethod
+    def _trading_today():
+        """今天是否(近似)交易日：已注册日历时查日历，否则工作日近似。"""
+        cal = util.calendar_dates()
+        today = util.today_str()
+        if cal:
+            return today in cal
+        return util.is_weekday(today)
+
+    @staticmethod
+    def _kline_seq(items, need_from):
+        seq = sorted((d, it[0], it[1]) for d, it in items.items())
+        if need_from:
+            seq = [x for x in seq if x[0] >= need_from]
+        return seq
 
     def _index_key(self):
         idx = self.cfg.get("market", {}).get("index", {})
@@ -538,6 +608,7 @@ class Market:
     def _em_index_history(self, secid, need_from):
         cache = util.load_json(self._kline_cache_path(secid), {"items": {}})
         items = dict(cache.get("items", {}))
+        updated = str(cache.get("updated") or "")
         try:
             beg_d = util.add_days(need_from, -15)
             end = util.add_days(util.today_str(), 3)
@@ -554,53 +625,62 @@ class Market:
                 raise DataError("东财指数K线为空: {}".format(secid))
             for d, c, v in fresh:
                 items[d] = [c, v]
+            updated = util.now_iso()
             util.save_json(self._kline_cache_path(secid),
-                           {"updated": util.now_iso(), "items": items})
+                           {"updated": updated, "items": items})
         except DataError:
             if not items:
                 raise
             self.warnings.append("指数K线使用本地缓存: {}".format(secid))
-        seq = sorted((d, it[0], it[1]) for d, it in items.items())
-        if need_from:
-            seq = [x for x in seq if x[0] >= need_from]
-        return seq
+        self._register_calendar(items)
+        items = self._drop_partial_today(items, updated)
+        return self._kline_seq(items, need_from)
 
     def index_history(self, need_from=None):
-        """[(date, close, vol)] 升序。"""
+        """[(date, close, vol)] 升序（收盘K线；当天盘中快照bar会被剔除）。"""
         key = self._index_key()
         need = need_from or util.add_days(util.today_str(), -220)
         if self.use_zhitu:
             cache = util.load_json(self._kline_cache_path(key), {"items": {}})
             items = dict(cache.get("items", {}))
+            updated = str(cache.get("updated") or "")
             cache_max = max(items) if items else None
-            # 智兔按区间取：需要从 need 到“今天”；若缓存最新已含今天则直接读缓存
-            try:
-                if cache_max is None or cache_max < util.today_str():
-                    rows = self._zt_index_history(need, util.add_days(util.today_str(), 1))
+            today = util.today_str()
+            now_hhmm = util.now_dt().strftime("%H:%M")
+            # 当天bar尚为盘中快照（15:05前抓取）且当前已过收盘 → 需要在线重取收盘bar；
+            # 缓存缺失/落后于今天 且 今天是交易日 → 需要在线拉取。
+            partial_day = (cache_max == today and not self._bar_is_final(updated))
+            need_online = (cache_max is None or cache_max < today) or \
+                (partial_day and now_hhmm >= CLOSE_TIME)
+            if need_online and (self._trading_today() or cache_max is None):
+                try:
+                    rows = self._zt_index_history(need, util.add_days(today, 1))
                     for d, c, v in rows:
                         items[d] = [c, v]
+                    updated = util.now_iso()
                     util.save_json(self._kline_cache_path(key),
-                                   {"updated": util.now_iso(), "items": items})
-            except DataError as e:
-                self.warnings.append("智兔指数K线失败，尝试东财：{}".format(e))
-                try:
-                    rows = self._em_index_history(self.cfg.get("market", {}).get("index", {})
-                                                  .get("eastmoney_secid"), need)
-                    items = {d: [c, v] for d, c, v in rows}
-                    key2 = self.cfg.get("market", {}).get("index", {}) \
-                        .get("eastmoney_secid")
-                    util.save_json(self._kline_cache_path(key2),
-                                   {"updated": util.now_iso(), "items": items})
-                except DataError:
-                    if not items:
-                        raise DataError("指数K线获取失败且无缓存")
-                    self.warnings.append("指数K线使用本地缓存")
+                                   {"updated": updated, "items": items})
+                except DataError as e:
+                    self.warnings.append("智兔指数K线失败，尝试东财：{}".format(e))
+                    try:
+                        secid = self.cfg.get("market", {}).get("index", {}) \
+                            .get("eastmoney_secid")
+                        items = {d: [c, v] for d, c, v in
+                                 self._em_index_history(secid, need)}
+                        key2 = secid
+                        updated = util.now_iso()
+                        util.save_json(self._kline_cache_path(key2),
+                                       {"updated": updated, "items": items})
+                        self._register_calendar(items)
+                    except DataError:
+                        if not items:
+                            raise DataError("指数K线获取失败且无缓存")
+                        self.warnings.append("指数K线使用本地缓存")
+            self._register_calendar(items)
+            items = self._drop_partial_today(items, updated)
+            return self._kline_seq(items, need_from)
         else:
             return self._em_index_history(key, need)
-        seq = sorted((d, it[0], it[1]) for d, it in items.items())
-        if need_from:
-            seq = [x for x in seq if x[0] >= need_from]
-        return seq
 
     def index_latest(self):
         seq = self.index_history()

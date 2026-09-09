@@ -84,6 +84,17 @@ class Ledger:
                 index_close REAL,
                 note TEXT
             );
+            CREATE TABLE IF NOT EXISTS executed(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                action TEXT NOT NULL,
+                date TEXT NOT NULL,
+                shares REAL NOT NULL DEFAULT 0,
+                nav REAL NOT NULL DEFAULT 0,
+                fee REAL NOT NULL DEFAULT 0,
+                cash_delta REAL NOT NULL DEFAULT 0,
+                note TEXT DEFAULT ''
+            );
             """)
         # 兼容旧库：为 orders 补 submit_at 列
         cols = [r["name"] for r in self.conn.execute("PRAGMA table_info(orders)")]
@@ -210,22 +221,59 @@ class Ledger:
                 locked += r["shares"]
         return round(sellable, 4), round(locked, 4)
 
-    def exec_buy(self, code, buy_date, spent, shares, nav, fee):
-        """买入成交：新增批次并扣减现金。"""
+    def exec_buy(self, code, buy_date, shares, nav, fee, budget=None):
+        """买入成交：新增批次并按“实际占用 = 份额×净值 + 费”扣减现金。
+
+        - 只扣 shares*nav+fee，计划金额与实际的尾差退回现金（不再静默蒸发）；
+        - 余额不足时不产生任何批次/扣款副作用，返回 {"ok": False, "reason": ...}；
+        - 每笔写入 executed 流水，供 check_consistency() 断言资金守恒。
+        返回 {"ok": True, "debit", "fee"} 或 {"ok": False, "reason"}。
+        """
         shares = round(float(shares), 2)
+        fee = util.r2(float(fee or 0))
+        if shares <= 0:
+            return {"ok": False, "reason": "份额<=0，无法成交"}
+        nav6 = round(float(nav), 6)
+        debit = util.r2(shares * nav6 + fee)
+        if budget is not None:
+            # 尾差保护：实际占用不得超过计划金额；差额留在现金里
+            debit = min(debit, util.r2(float(budget)))
         with self.lock:
-            if shares <= 0:
-                return False
+            cur_cash = self.cash()
+            if cur_cash + 1e-6 < debit:
+                return {"ok": False,
+                        "reason": "现金不足：本笔需 {:.2f} 元，可用 {:.2f} 元".format(
+                            debit, cur_cash)}
+            self._ensure_seed()
             with self.conn:
                 self.conn.execute(
                     "INSERT INTO lots(fund_code,buy_date,shares,nav,fee) "
                     "VALUES(?,?,?,?,?)",
-                    (code, buy_date, shares, round(float(nav), 6),
-                     round(float(fee), 2)))
-            self.add_cash(-float(spent))
+                    (code, buy_date, round(shares, 4), nav6, fee))
+            if debit > 0:
+                self.add_cash(-debit)
             if fee > 0:
                 self.add_fee(fee)
-        return True
+            self._log_exec(code, "buy", buy_date, shares, nav6, fee, -debit,
+                           "exec_buy")
+        return {"ok": True, "debit": debit, "fee": fee, "shares": shares}
+
+    def _ensure_seed(self):
+        """资金守恒基线：老库首次启用时以当前现金为基线（此后成交流水可核对）。"""
+        v = self.meta("seed_cash")
+        if v is None:
+            self.set_meta("seed_cash", str(util.r2(self.cash())))
+        return float(self.meta("seed_cash") or 0)
+
+    def _log_exec(self, code, action, date_s, shares, nav, fee, cash_delta,
+                  note=""):
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO executed(code,action,date,shares,nav,fee,"
+                "cash_delta,note) VALUES(?,?,?,?,?,?,?,?)",
+                (code, action, str(date_s)[:10], round(float(shares), 4),
+                 round(float(nav), 6), util.r2(float(fee or 0)),
+                 util.r2(float(cash_delta)), str(note or "")[:200]))
 
     def exec_sell(self, code, sell_date, shares_to_sell, nav, rate_fn):
         """卖出成交：按 FIFO 消费批次，逐批按持有天数计赎回费。
@@ -258,8 +306,44 @@ class Ledger:
                 self.add_cash(net)
             if fee > 0:
                 self.add_fee(fee)
+            if executed > 0:
+                self._log_exec(code, "sell", sell_date, executed,
+                               round(float(nav), 6), util.r2(fee),
+                               util.r2(net), "exec_sell")
         return {"executed": round(executed, 4), "gross": util.r2(gross),
                 "fee": util.r2(fee), "net": util.r2(net)}
+
+    def check_consistency(self, tol=0.02, raise_on_mismatch=True):
+        """资金守恒断言：seed_cash + Σ成交流水现金变动 == 当前现金。
+
+        另检查批次份额不为负。老库在首次调用时自动建立基线（此前历史不追溯）。
+        """
+        with self.lock:
+            seed = self._ensure_seed()
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(cash_delta),0) s, COUNT(*) n "
+                "FROM executed").fetchone()
+            delta, n = float(row["s"]), int(row["n"])
+            rec = util.r2(seed + delta)
+            cur = self.cash()
+            diff = abs(rec - cur)
+            neg = self.conn.execute(
+                "SELECT fund_code, MIN(shares) m FROM lots GROUP BY fund_code "
+                "HAVING MIN(shares) < -0.0001").fetchall()
+            problems = []
+            if diff > tol:
+                problems.append(
+                    "资金偏差 {:.4f} 元（现金 {} vs 基线 {}+流水 {}={}，共 {} 笔成交）".format(
+                        diff, cur, seed, delta, rec, n))
+            for r in neg:
+                problems.append("批次份额为负：{} {}".format(
+                    r["fund_code"], r["m"]))
+            ok = not problems
+            if not ok and raise_on_mismatch:
+                raise RuntimeError("账本一致性检查失败：" + "；".join(problems))
+            return {"ok": ok, "seed": seed, "cash": cur,
+                    "reconstructed": rec, "diff": round(diff, 4),
+                    "executed": n, "problems": problems}
 
     # ---------------- 订单 ----------------
     def add_order(self, order_date, code, action, amount, note=""):
@@ -379,7 +463,9 @@ class Ledger:
                 self.conn.execute("DELETE FROM orders")
                 self.conn.execute("DELETE FROM records")
                 self.conn.execute("DELETE FROM snapshots")
+                self.conn.execute("DELETE FROM executed")
             self.set_meta("cash", str(round(float(initial_cash), 2)))
+            self.set_meta("seed_cash", str(round(float(initial_cash), 2)))
             self.set_meta("fees", "0")
             self.set_meta("peak_total", "0")
             self.set_meta("score_ema", "")

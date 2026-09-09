@@ -183,14 +183,23 @@ def news_cache_file(date_s):
     return util.cache_file("news_{}.json".format(date_s))
 
 
+NEWS_SCHEMA = 2  # 缓存结构版本：>=2 必须带全量 feed（供人工筛选打标）
+
+
 def load_news(date_s, amplitude=8, force=False, cfg=None):
     """带文件缓存的当日消息面（默认每天只在线抓一次；force=True 强制重抓，
-    让新学到的词参与当天自动打分，并覆盖缓存）。"""
+    让新学到的词参与当天自动打分，并覆盖缓存）。
+
+    旧版本缓存（无 feed 字段 / schema<2）视为无效：在线重抓后写新结构；
+    若在线失败则回退旧缓存（保留 bull/bear 供研判文案，但无 feed 无法打标入库）。
+    """
     path = news_cache_file(date_s)
     amp = int(amplitude)
     cached = util.load_json(path)
+    feed_ok = isinstance((cached or {}).get("feed"), list)
     if not force and cached and cached.get("date") == date_s and \
-            cached.get("ok") and cached.get("amplitude") == amp:
+            cached.get("ok") and cached.get("amplitude") == amp and \
+            cached.get("schema", 1) >= NEWS_SCHEMA and feed_ok:
         return cached
     try:
         res = fetch_news(amplitude=amp, cfg=cfg)
@@ -201,5 +210,6 @@ def load_news(date_s, amplitude=8, force=False, cfg=None):
                 "items": 0, "feed": [], "bull": [], "bear": [],
                 "net": 0, "score": 0, "amplitude": amp}
     res["date"] = date_s
+    res["schema"] = NEWS_SCHEMA
     util.save_json(path, res)
     return res

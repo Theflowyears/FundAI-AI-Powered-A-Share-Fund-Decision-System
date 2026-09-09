@@ -2,6 +2,7 @@
 """内置 Web 服务：静态界面 + JSON API（仅标准库 http.server）。"""
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -33,6 +34,25 @@ class ApiApp:
         self.engine.ensure_account()
         self.screen = screening.ScreeningStore()
         self._busy = threading.Lock()
+        # 服务端快照缓存：GET 只读轮询不再每次都遍历全池在线拉净值（audit P1-9）
+        self._snap = {}
+        self._snap_lock = threading.Lock()
+
+    def _snapshot(self, key, ttl, fn):
+        """按 key 做 TTL 快照缓存（ttl 秒）。fn 返回可 JSON 序列化对象。"""
+        now = time.time()
+        with self._snap_lock:
+            hit = self._snap.get(key)
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+        val = fn()
+        with self._snap_lock:
+            self._snap[key] = (time.time(), val)
+        return val
+
+    def _invalidate(self):
+        with self._snap_lock:
+            self._snap.clear()
 
     # ---------------- 消息与进化（筛选/学习/搜索补全） ----------------
     def news_payload(self, date_s=None):
@@ -47,6 +67,9 @@ class ApiApp:
         feed = []
         for r in items:
             d = dict(r)
+            # 前端打标按钮用 it.id（见 app.js renderNews）；SQLite 行主键叫 item_id，
+            # 这里补一个 id 别名，避免前端提交 “undefined” 导致打标 500。
+            d["id"] = d.get("item_id") or d.get("id") or ""
             d["funds_links"] = [{"code": c, "name": nmap.get(c, c)}
                                 for c in (d.get("funds") or [])]
             feed.append(d)
@@ -101,7 +124,7 @@ class ApiApp:
         o = self.ledger.order_by_id(oid)
         if not o:
             return {"ok": False, "message": "订单不存在"}
-        if o["status"] != "pending":
+        if o["status"] not in ("pending", "submitted"):
             return {"ok": False, "message": "订单状态为 {}，不可执行".format(o["status"])}
         code = o["fund_code"]
         if not self.engine.pool_item(code):
@@ -147,7 +170,11 @@ class ApiApp:
             shares = float(int(shares * 100)) / 100.0
             if shares < 0.01:
                 return {"ok": False, "message": "金额过小，无法形成有效份额"}
-            self.ledger.exec_buy(code, fill_date, amount, shares, nav, fee)
+            res = self.ledger.exec_buy(code, fill_date, shares, nav, fee,
+                                       budget=amount)
+            if not res["ok"]:
+                return {"ok": False, "message": res.get("reason") or "买入失败"}
+            amount = res["debit"]  # 实际扣款（尾差已退回现金）
         else:  # sell
             if not shares:
                 sellable, _ = self.ledger.sellable(code, fill_date,
@@ -226,7 +253,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/orders":
             self._json({"ok": True, "orders": self.app.ledger.orders()})
         elif path == "/api/funds":
-            self._json({"ok": True, "funds": self.app.engine.fund_status()})
+            funds = self.app._snapshot("funds", 60, self.app.engine.fund_status)
+            self._json({"ok": True, "funds": funds})
         elif path == "/api/indices":
             try:
                 items = self.app.market.indices_quote()
@@ -261,9 +289,10 @@ class Handler(BaseHTTPRequestHandler):
     def _state(self):
         app = self.app
         try:
-            st = app.engine.state_payload()
+            cached = app._snapshot("state", 75, app.engine.state_payload)
         except DataError as e:
-            st = {"error": str(e)}
+            cached = {"error": str(e)}
+        st = dict(cached)  # 浅拷贝，避免污染共享缓存
         st["readonly_demo"] = app.demo
         st["config"] = {
             "funds": app.cfg.get("pool", []),
@@ -290,6 +319,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = app.engine.run_daily(force=bool(body.get("force")))
                 if out.get("status") == "error":
                     return self._err(out.get("message", "运行失败"))
+                app._invalidate()
                 return self._json({"ok": True, **out})
             finally:
                 app._busy.release()
@@ -300,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err("系统忙，请稍候", 409)
             try:
                 res = app.engine.refresh_pool()
+                app._invalidate()
                 return self._json({"ok": bool(res.get("ok")), "result": res})
             except Exception as e:
                 return self._err("重建备选池失败：" + str(e))
@@ -315,6 +346,7 @@ class Handler(BaseHTTPRequestHandler):
             # 计算给用户的 T+1 时间线
             V = util.nav_value_date(submit_at)
             C = util.add_trading_days(V, 1)
+            app._invalidate()
             return self._json({"ok": True, "order": updated,
                                "submit_at": submit_at,
                                "nav_value_date": V, "confirm_date": C,
@@ -323,15 +355,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/orders/skip":
             oid = body.get("id")
             o = app.ledger.order_by_id(oid)
-            if not o or o["status"] != "pending":
-                return self._err("订单不存在或不可跳过")
-            app.ledger.skip_order(oid, "用户手动跳过")
-            return self._json({"ok": True})
+            if not o or o["status"] not in ("pending", "submitted"):
+                return self._err("订单不存在或当前状态不可跳过/撤销")
+            app.ledger.skip_order(oid, "用户手动跳过/撤销")
+            app._invalidate()
+            return self._json({"ok": True,
+                               "message": "已跳过该指令" if o["status"] == "pending"
+                               else "已撤销该提交（如需已发生的真实成交，请以平台为准）"})
         elif path == "/api/orders/fill":
             if not app._busy.acquire(blocking=False):
                 return self._err("系统忙", 409)
             try:
-                return self._json(app.manual_fill(body))
+                res = app.manual_fill(body)
+                app._invalidate()
+                return self._json(res)
             finally:
                 app._busy.release()
         elif path == "/api/backtest":
