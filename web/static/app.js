@@ -44,24 +44,28 @@ let DIRS = null;       // AI 方向判断命中统计（/api/news/dirstats）
 let fillTarget = null; // 待录入订单
 
 /* ---------- 加载 ---------- */
+let loadSeq = 0; // 请求序号：慢响应返回时若已有更新的轮询，丢弃旧数据防止覆盖
 async function loadAll(quiet) {
+  const seq = ++loadSeq;
   try {
     const [s, h, r, o, f] = await Promise.all([
       api("/api/state"), api("/api/history"), api("/api/records"),
       api("/api/orders"), api("/api/funds"),
     ]);
+    if (seq !== loadSeq) return; // 已有更新的加载结果，丢弃本次
     ST = s.state; HIST = h.snapshots || []; RECS = r.records || [];
     ORDERS = o.orders || []; FUNDS = f.funds || [];
     renderHeader(); renderDash(); renderRecords(); renderOrders(); renderFunds();
     renderSettings(); tryRenderBt();
     // echarts 就绪后与布局稳定后各重绘一次（容器可见才真正绘制）
     whenEcharts(redrawAll);
-    setTimeout(() => whenEcharts(redrawAll), 600);
+    setTimeout(() => { if (seq === loadSeq) whenEcharts(redrawAll); }, 600);
   } catch (e) {
     if (!quiet) toast("加载失败：" + e.message, "err");
   }
   loadIndices();
   api("/api/news/dirstats").then(j => {
+    if (seq !== loadSeq) return;
     DIRS = j.stats || null;
     if (document.querySelector("nav.tabs button.on")?.dataset.tab === "dash") {
       whenEcharts(drawAIDir);

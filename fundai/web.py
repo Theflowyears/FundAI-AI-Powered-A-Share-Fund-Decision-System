@@ -249,7 +249,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/history":
             self._json({"ok": True, "snapshots": self.app.ledger.get_snapshots()})
         elif path == "/api/records":
-            self._json({"ok": True, "records": self.app.ledger.get_records()})
+            # 界面轮询常拖全量研判正文（LLM 长文可到 MB 级）：只给最近 150 条
+            self._json({"ok": True, "records": self.app.ledger.get_records(150)})
         elif path == "/api/orders":
             self._json({"ok": True, "orders": self.app.ledger.orders()})
         elif path == "/api/funds":
@@ -376,7 +377,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err("上一次任务仍在运行，请稍候", 409)
             try:
                 months = int(body.get("months") or 6)
-                source = str(body.get("source") or "auto")
+                # 演示界面只回放合成数据：禁止偷偷用正式指数/净值烧配额
+                source = "demo" if app.demo else str(body.get("source") or "auto")
                 res = app.engine.backtest(months=months, source=source)
                 res["_run_at"] = util.now_iso()
                 util.save_json(BACKTEST_FILE, res)
