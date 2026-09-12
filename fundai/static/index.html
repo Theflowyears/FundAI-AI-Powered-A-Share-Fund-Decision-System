@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FundAI · A 股基金量化决策系统</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo">🧠 FundAI · 基金量化决策系统 <small>——只买场外基金，不碰股票</small></div>
+  <span id="badgeMode" class="badge">…</span>
+  <span id="badgeExec" class="badge">…</span>
+  <span id="badgeSrc" class="badge">…</span>
+  <span class="spacer"></span>
+  <button id="btnRun" class="btn primary" title="每个交易日收盘后点一次：AI 出当日研判并下达次日指令">▶ 立即运行今日研判</button>
+</header>
+<nav class="tabs">
+  <button data-tab="dash" class="on">仪表盘</button>
+  <button data-tab="records">每日研判</button>
+  <button data-tab="micro">情绪复盘</button>
+  <button data-tab="news">消息与进化</button>
+  <button data-tab="orders">指令与成交</button>
+  <button data-tab="backtest">回测</button>
+  <button data-tab="settings">设置</button>
+</nav>
+
+<main>
+  <!-- ============ 仪表盘 ============ -->
+  <section id="tab-dash" class="page on">
+    <div class="panel" id="srcAlertPanel" style="display:none">
+      <h3>⚠️ 数据源降级提示 <span class="badge" id="srcAlertBadge">降级中</span></h3>
+      <div class="mut small" id="srcAlertNote"></div>
+      <div id="srcAlertDetail"></div>
+    </div>
+    <div class="idx-strip" id="idxStrip">
+      <div class="mut" style="padding:8px 4px">大盘指数加载中…</div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="k">总资产（目标 <span id="cTargetLbl">—</span>）</div>
+        <div class="v" id="cTotal">—</div>
+        <div class="sub"><span id="cGain"></span> · 手续费 <span id="cFees" class="mono">—</span></div>
+        <div class="progress"><div class="fill" id="pFill"></div><div class="mark" id="pMark" style="left:50%"></div></div>
+        <div class="sub">目标线 <span id="cTargetTxt">—</span>（<span id="pMarkPct">—</span>）</div>
+      </div>
+      <div class="card">
+        <div class="k">距目标</div>
+        <div class="v" id="cGap">—</div>
+        <div class="sub" id="cNeedDaily">—</div>
+      </div>
+      <div class="card">
+        <div class="k">现金 / 股基 / 债基</div>
+        <div class="v small mono" id="cAlloc">—</div>
+        <div class="sub" id="cAllocPct">—</div>
+      </div>
+      <div class="card">
+        <div class="k">实验进度</div>
+        <div class="v small" id="cPeriod">—</div>
+        <div class="sub" id="cDaysLeft">—</div>
+      </div>
+      <div class="card">
+        <div class="k">最新研判</div>
+        <div class="v small" id="cViewTitle">—</div>
+        <div class="sub" id="cViewMeta">—</div>
+        <div class="sub" id="cViewCalc"></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>📈 资产曲线（最近 7 个交易日）vs 目标线 vs 沪深300（同起点）</h3>
+        <div id="chMain" class="chart"></div>
+      </div>
+      <div class="panel">
+        <h3>🥧 当前资产结构</h3>
+        <div id="chPie" class="chart sm"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">💰 当前持仓盈亏
+        <span class="mut small" style="font-weight:normal">（成本 vs 市值 · 红盈绿亏）</span>
+        <span class="spacer"></span>
+        <button id="btnRefreshPos" class="btn small" title="立即在线重取持仓基金的最新净值（绕过 60s 轮询/75s 快照缓存），用于尽快核对收益">↻ 刷新持仓净值</button>
+      </h3>
+      <div class="pnl-cards" id="pnlSummary"></div>
+      <div id="pnlTable"></div>
+    </div>
+
+    <div class="panel">
+      <h3>📊 每日 AI 观点评分（-100 ~ +100，红=偏多 绿=偏空）</h3>
+      <div id="chScore" class="chart sm"></div>
+    </div>
+
+    <div class="panel">
+      <h3>🤖 AI 方向研判自检（每次研判自动记录 · 下一交易日结算）</h3>
+      <div id="chAIDir" class="chart sm"></div>
+      <div class="mut small" id="aiDirSummary" style="margin-top:6px"></div>
+    </div>
+
+    <div class="panel">
+      <h3>🤖 最新 AI 研判（盘后复盘 · 每个交易日更新）</h3>
+      <div id="latestView"></div>
+    </div>
+    <div class="panel">
+      <h3>⚠️ 运行提示</h3>
+      <div id="hints"></div>
+    </div>
+  </section>
+
+  <!-- ============ 每日研判 ============ -->
+  <section id="tab-records" class="page">
+    <div class="panel">
+      <h3>🗓️ 每日 AI 研判时间线（只读历史）</h3>
+      <div id="recList"></div>
+    </div>
+  </section>
+
+  <!-- ============ 情绪复盘（微观结构） ============ -->
+  <section id="tab-micro" class="page">
+    <div class="panel">
+      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">🌡️ 涨停情绪脉搏（同花顺微观结构）
+        <span class="mut small" style="font-weight:normal">晋级率 / 炸板率 / 题材持续性 / 连板梯队——借鉴 Cailianpress-Feishu-Bot 复盘算法</span>
+        <span class="spacer"></span>
+        <button id="btnMicroRefresh" class="btn small" title="忽略当日缓存，重新抓取今日数据">↻ 重抓今日</button>
+      </h3>
+      <div class="mut small" id="microNote">加载中…</div>
+      <div class="cards" id="microKpis" style="margin-top:8px"></div>
+      <div class="panel" style="background:rgba(255,255,255,.03)">
+        <h3>📜 复盘正文</h3>
+        <div id="microLines" class="mut" style="line-height:2"></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>📉 近 7 日情绪轨迹（分=柱，涨停/跌停=线）</h3>
+        <div class="mut small" id="microTrendNote">—</div>
+        <div id="chMicroTrend" class="chart sm"></div>
+      </div>
+      <div class="panel">
+        <h3>🔥 题材热度（涨停概念+0.5×最强风口，按当日占比衰减+持续性加成 → 已映射到选基主题）</h3>
+        <div class="mut small" id="heatNote">—</div>
+        <div id="chMicroHeat" class="chart sm"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>🧗 连板梯队与主流题材（今日）</h3>
+      <div id="microLadder" class="mut"></div>
+    </div>
+  </section>
+
+  <!-- ============ 消息与进化（可视化人工筛选） ============ -->
+  <section id="tab-news" class="page">
+    <div class="panel">
+      <h3>📰 每日消息广域筛选 · 让算法学会你的判断</h3>
+      <div class="mut small" style="margin:4px 0 10px">
+        每天收盘后：先点【拉取今日消息】（东财+新浪+财联社电报多源，逐条自动打标并与备选基金联动；🔴=重要电报）→
+        AI 已直接采纳方向明确的利好/利空；<b>机构持股比例权益披露、ETF 溢价提示、以及同模板批量刷屏的中性消息，AI 已自动判中性归档、不占人工额度</b>（可在“📦AI归档”筛选查看）；你只需在下方<b>“待确认”里挑 AI 没把握（中性）的最多 50 条</b>
+        复核打标（利好/利空/中性/重大利好/重大利空/与市场无关）→
+        算法把打标结果<b>学成完整金融术语词</b>，此后自动打分自动带上你教会的词。
+        <b>次日大盘方向由 AI 自动研判并自检命中率，不需要你来预测。</b>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+        <label class="mut small">日期
+          <input type="date" id="nDate" style="padding:4px 6px;background:#0e1526;color:#c7d3e8;border:1px solid var(--line);border-radius:6px">
+        </label>
+        <button id="btnNewsPull" class="btn primary small">📥 拉取今日消息</button>
+        <button id="btnNewsGo" class="btn small">查看</button>
+        <button id="btnSearchExport" class="btn small" title="把信息缺口登记到 data/search_queue.json，供 DSH 助手本地搜索回填">🔄 登记搜索补全清单</button>
+        <button id="btnSearchImport" class="btn small" title="把 data/search_results.json 的搜索结果合并进当天消息库">📦 合并搜索回填结果</button>
+        <span class="spacer"></span>
+        <span class="mut small" id="nScoreNote"></span>
+      </div>
+      <div class="cards" style="margin-top:12px">
+        <div class="card"><div class="k">自动消息分（词典+学习词）</div>
+          <div class="v" id="nAutoScore">—</div>
+          <div class="sub" id="nAutoSub">拉取后更新</div></div>
+        <div class="card"><div class="k">人工消息分（你的打标）</div>
+          <div class="v gold-txt" id="nHumanScore">—</div>
+          <div class="sub" id="nLabels">尚未打标</div></div>
+        <div class="card"><div class="k">今日打标进度</div>
+          <div class="v small" id="nProgress">—</div>
+          <div class="sub">确认 ≤50 条最不确定的消息即可，其余自动采用 AI 判断</div></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>🤖 AI 对次日大盘的方向判断（自动记录 · 自检命中率）</h3>
+        <div class="mut small" style="margin:2px 0 6px">
+          方向由 AI 按当日合成评分自动生成并记录，下一交易日收盘后自动结算；
+          你不需要预测大盘——你的任务只有<b>标记信息价值与过滤</b>。
+        </div>
+        <div id="nDirCur" class="mut small" style="margin:6px 0"></div>
+        <div id="nDirStats" class="mut small" style="margin:6px 0"></div>
+        <div id="nDirHist"></div>
+      </div>
+      <div class="panel">
+        <h3>🧠 学习词典（打标后自动进化） <span class="mut small" id="nLearnSub"></span></h3>
+        <div class="mut small" style="margin:2px 0 8px">基础词典 <span id="nBaseLex">—</span> 词 + 你教会它的新词。下面仅列出“方向一致性足够、且新出现”的词，自动打分时会叠加生效。</div>
+        <div id="nLearned" style="max-height:220px; overflow:auto"></div>
+        <h3 style="margin-top:10px">🔍 信息缺口 & DSH 本地搜索补全</h3>
+        <div class="mut small" style="margin:2px 0 6px" id="nQueueHint"></div>
+        <div id="nQueue"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>📊 事件命中率校准 <span class="mut small" style="font-weight:normal">（消息 → 下一交易日沪深300 · 逐日自动积累）</span>
+        <span class="spacer"></span>
+        <button id="btnExtendHist" class="btn small" title="把主指数历史K线延伸并写本地缓存（1 次在线请求）">↻ 延伸历史(8年)</button>
+        <button id="btnBackfillCalib" class="btn small" title="抓取财联社历史电报（时间游标回溯），用与线上同口径重新打分 → 立刻得到足够样本量">🔄 历史回填</button>
+        <button id="btnRefreshCalib" class="btn small">刷新</button>
+      </h3>
+      <div class="mut small" style="margin:2px 0 8px" id="calibSub">—</div>
+      <div id="calibBox"><div class="mut">暂无校准数据。每个交易日 20:30 自动结算后这里会显示每类事件的命中率。</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>🧠 事件→次日方向 · 样本外模型 <span class="mut small" style="font-weight:normal">（walk-forward，绝不使用未来信息）</span>
+        <span class="spacer"></span>
+        <button id="btnRunModel" class="btn small" title="用历史电报 + 指数状态做样本外评估：把握度分档命中率、选择性出手精度、配置选择期/留出期分离">🧠 跑样本外模型</button>
+      </h3>
+      <div class="mut small" style="margin:2px 0 8px" id="modelSub">—</div>
+      <div id="modelBox"><div class="mut">尚无模型结果。点右上按钮，或命令行
+        <code>python app.py event-model --days 400 --select</code>。</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>🗞 今日消息逐条筛选
+        <span class="mut small" style="font-weight:normal">（红=利好 绿=利空 灰=中性/无关；点右侧按钮覆盖自动判断）</span>
+      </h3>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px">
+        <span class="mut small">过滤：</span>
+        <button class="chip on" data-nf="all">全部</button>
+        <button class="chip" data-nf="unrated">待确认</button>
+        <button class="chip" data-nf="auto">AI已采纳</button>
+        <button class="chip" data-nf="imp">🔴重要</button>
+        <button class="chip" data-nf="archived">📦AI归档</button>
+        <button class="chip" data-nf="bull">利好</button>
+        <button class="chip" data-nf="bear">利空</button>
+        <button class="chip" data-nf="neutral">中性</button>
+        <button class="chip" data-nf="irrelevant">与市场无关</button>
+        <span class="spacer"></span>
+        <span id="nFeedCount" class="mut small"></span>
+      </div>
+      <div id="nFeedList"><div class="mut">先点上方【拉取今日消息】…（如在线源失败会自动登记补全清单）</div></div>
+    </div>
+  </section>
+
+  <!-- ============ 指令与成交 ============ -->
+  <section id="tab-orders" class="page">
+    <div class="panel">
+      <h3>⏱ 场外基金 T+1 时间线（先看这个再操作）</h3>
+      <table>
+        <thead><tr><th style="width:110px">动作</th><th>什么时候提交</th><th>按哪天净值</th><th>什么时候生效/到账</th></tr></thead>
+        <tbody>
+          <tr><td><span class="up">申购</span></td>
+              <td>交易日 15:00 前提交（AI 建议为盘后生成，一般指<b>下一交易日</b> 15:00 前）</td>
+              <td>提交当日收盘净值</td>
+              <td>T+1 确认份额、当晚可查；确认日才开始计算 7 天锁仓</td></tr>
+          <tr><td><span class="down">赎回</span></td>
+              <td>交易日 15:00 前提交</td>
+              <td>提交当日收盘净值</td>
+              <td>确认后资金到账：债基约 T+1；权益基金一般 T+1~T+3（以平台为准）</td></tr>
+          <tr><td><span class="down">转换</span></td>
+              <td>交易日 15:00 前提交（AI 建议为盘后生成，一般指<b>下一交易日</b> 15:00 前）</td>
+              <td>转出与转入按同一交易时点净值确认</td>
+              <td>T+1 同步确认转出/转入份额；确认日才开始计算 7 天锁仓</td></tr>
+          <tr><td>锁仓规则</td>
+              <td colspan="3">确认日起持有满 <b>7 个自然日</b>再赎回才免惩罚费；不满 7 天赎回费 1.5%（C 类第 8 天起为 0）</td></tr>
+          <tr><td>轮动说明</td>
+              <td colspan="3">AI 换基默认走<b>『基金转换/超级转换』</b>：赎回与申购同日配对下单，一次操作完成，
+                  转出与转入同步确认，<b>没有“先赎回→等资金到账→再买”的空窗期</b>；
+                  仅当平台不支持该对基金转换时才退化为两步（先赎回，到账后再录入申购）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>📋 AI 今日建议（人工跟单：执行后点“已执行”录入实际成交）</h3>
+      <div id="pendingBox"><div class="mut">暂无待执行指令</div></div>
+    </div>
+    <div class="panel">
+      <h3>🧾 成交记录</h3>
+      <div id="orderTable"></div>
+    </div>
+  </section>
+
+  <!-- ============ 回测 ============ -->
+  <section id="tab-backtest" class="page">
+    <div class="panel">
+      <h3>⏪ 策略回测：如果这套 AI 策略在过去的 N 个月运行会怎样？</h3>
+      <div class="mut small" style="margin-bottom:10px">
+        回测与实盘共用同一套规则（评分→仓位→买卖指令），不预测、不拟合；
+        数据源：在线真实净值；若本机无网络自动回退到合成演示数据。
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+        <label class="mut small">回看时长：
+          <select id="btMonths">
+            <option value="3">3 个月</option>
+            <option value="6" selected>6 个月</option>
+            <option value="9">9 个月</option>
+            <option value="12">12 个月</option>
+          </select>
+        </label>
+        <label class="mut small">数据源：
+          <select id="btSource">
+            <option value="auto" selected>自动（在线优先）</option>
+            <option value="live">仅在线真实数据</option>
+            <option value="demo">仅演示合成数据</option>
+          </select>
+        </label>
+        <button id="btnBt" class="btn gold">⚡ 开始回测</button>
+        <span id="btLoading" class="mut small" style="display:none">回测中，请稍候…</span>
+      </div>
+    </div>
+    <div id="btResult" style="display:none">
+      <div class="cards" id="btCards"></div>
+      <div class="panel"><h3>📈 回测资产曲线</h3><div id="chBt" class="chart"></div></div>
+      <div class="hint" id="btNote"></div>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section id="tab-settings" class="page">
+    <div class="panel">
+      <h3>🎛 参数开关面板
+        <span class="badge" id="paramBadge">加载中…</span>
+        <span class="spacer" style="flex:1"></span>
+        <label class="mut small" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="paramAdvanced"> 显示进阶参数</label>
+        <button id="btnParamSave" class="btn small gold">💾 保存改动</button>
+        <button id="btnParamUndo" class="btn small">↩ 撤销未保存</button>
+        <button id="btnParamRollback" class="btn small">🕘 回滚上一份备份</button>
+      </h3>
+      <div class="mut small" id="paramNote"></div>
+      <div id="paramToggles" class="toggle-grid"></div>
+      <div id="paramGroups"></div>
+    </div>
+    <div class="panel">
+      <h3>🛰 数据源与配额
+        <span class="badge" id="srcBadge">…</span>
+      </h3>
+      <div class="mut small" id="srcNote"></div>
+      <div id="srcDetail"></div>
+    </div>
+    <div class="panel">
+      <h3>⚙️ 账户信息</h3>
+      <div id="setAccount"></div>
+    </div>
+    <div class="panel">
+      <h3>📦 动态备选基金池 <span id="poolBadge" class="badge">…</span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="btnPool" class="btn small gold">🔄 立即重建备选池（动态筛选）</button>
+      </h3>
+      <div class="mut small" id="poolNote"></div>
+      <div id="fundTable"></div>
+    </div>
+    <div class="panel">
+      <h3>🧭 策略参数与来源</h3>
+      <div id="setStrategy"></div>
+    </div>
+    <div class="panel">
+      <h3>📖 每日操作流程（视频拍摄就用这套）</h3>
+      <pre class="line" id="dailyGuide"></pre>
+    </div>
+  </section>
+</main>
+
+<footer>
+  本程序仅用于视频实验与学习：所有研判、指令、回测均为自动生成，不构成投资建议。<br>
+  基金有风险：目标收益需市场配合，A 股指数基金历史上的半年收益中位数远低于此；请把本实验当研究工具看待。
+</footer>
+
+<div id="toastBox"></div>
+<div class="modal-mask" id="fillMask">
+  <div class="modal">
+    <h3 id="fillTitle">录入实际成交</h3>
+    <div class="row"><label>成交日期（默认今天，格式 yyyy-mm-dd）</label><input id="fDate"></div>
+    <div class="row"><label id="fAmtLabel">扣款总额（元）</label><input id="fAmount" type="number"></div>
+    <div class="row"><label>确认份额（可不填，按金额÷净值自动算）</label><input id="fShares" type="number"></div>
+    <div class="row"><label>成交净值（可不填，自动取最新净值）</label><input id="fNav" type="number"></div>
+    <div class="row"><label>手续费（元，可不填按费率自动计算）</label><input id="fFee" type="number"></div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px">
+      <button class="btn" id="fCancel">取消</button>
+      <button class="btn primary" id="fOk">确认录入</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ECharts 加载：优先本地包（离线可用），失败再走 CDN 兜底（国内网络友好）。
+// 本地包缺失时可运行：python app.py vendor-echarts（联网执行一次即可）
+(function () {
+  var srcs = [
+    "vendor/echarts.min.js",
+    "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js",
+    "https://registry.npmmirror.com/echarts/5.5.0/files/dist/echarts.min.js",
+    "https://unpkg.com/echarts@5.5.0/dist/echarts.min.js"
+  ];
+  var idx = 0;
+  function load() {
+    if (idx >= srcs.length) {
+      window.__echartsFailed = true;
+      if (window.__notifyEchartsFail) window.__notifyEchartsFail();
+      return;
+    }
+    var s = document.createElement("script");
+    s.src = srcs[idx++];
+    s.onload = function () { window.__echartsLoaded = true; };
+    s.onerror = load;
+    document.head.appendChild(s);
+  }
+  load();
+})();
+</script>
+<script src="app.js"></script>
+</body>
+</html>
