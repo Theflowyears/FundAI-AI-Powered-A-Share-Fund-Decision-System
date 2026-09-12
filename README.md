@@ -139,15 +139,36 @@ python tools/audit_all.py              :: 全量审计：24 个 CLI 子命令 + 
 ```
 fundai/          主包：算法 / 引擎 / 数据源 / 消息管线 / 筛选与方向自检 / Web / 参数元数据
 web/static/      前端（原生 JS + 本地 ECharts，离线可用）
-data/            研究脚本与结论 JSON · 只读研究快照（行情与净值缓存、电报库快照、合成演示库）
+data/            研究脚本与结论 JSON + 只读研究快照（见下）
 tests/           260 项测试（含方向自检、并行、回放完整性、配置写入端等回归用例）
-tools/           打包与验证（make_release / verify_release / audit_all / redact_for_github）
+tools/           打包与验证（make_release / verify_release / audit_all / cache_to_db / clean_personal_data）
 assets/          图标等静态资源
 ```
 
 **仓库里有什么数据**：只读的**研究快照**——让读者开箱即跑、并让 §6 的结论可复现。
 **仓库里没有什么**：任何个人持仓、成交记录、资产曲线、方向判断记录或参数改动历史；
 `config.json`（含 Token 与 api_key）也不随仓库发布，首次运行自动生成干净的默认配置。
+
+### 7.1 缓存已收进单个 SQLite（`data/cache.db`）
+
+`data/cache/` 原本是**按日/按代码切分**的缓存（`micro_<date>.json` 约 260 个交易日、
+`nav_<code>.json` 几十只基金、`kline_*.json` 数份指数长历史……），单个体积很小但**文件数上千**：
+上传/同步的瓶颈在文件数，不在数据量。发布快照因此把它们收进**一个 `data/cache.db`**：
+
+| | 目录式 JSON | `data/cache.db` |
+|---|---|---|
+| 文件数 | 337 个 | **1 个** |
+| 占用 | 4.86 MB | **1.06 MB**（值做了 LZMA 压缩，321/337 条命中） |
+
+运行时由 `fundai/cachestore.py` + `util.load_json()` 的**只读回退**按需读出，
+读到的对象与原 `json.load` 完全一致，**算法口径一行未动**。读取优先级是
+**磁盘 JSON 优先、库里快照兜底**：你自己跑出来的缓存永远比仓库里的快照新。
+
+```bat
+python tools/cache_to_db.py --keep-files   :: 只打包不删文件（先看体积对比）
+python tools/cache_to_db.py                :: 打包并删除已入库的 JSON
+python tools/cache_to_db.py --dry-run      :: 只统计
+```
 
 **仓库里没有的两个超大文件**（GitHub 单文件 100MB 硬限制，可自行重建）：
 
@@ -165,6 +186,7 @@ assets/          图标等静态资源
 | [`README_TECH.md`](README_TECH.md) | **技术主文档**：架构总览、每日决策流、算法口径（选基/仓位/风控）、十年实证与四窗口回测、审计与修复清单、已知边界 |
 | [`README_PORTABLE.md`](README_PORTABLE.md) | 便携发行包 3 步上手（不含密钥/数据库/缓存） |
 | `data/*.json` | 全部研究结论原始产物（组合扫描、阉割对比、事件模型、并行基准…） |
+| `data/cache.db` | 只读缓存快照（情绪/净值/K线，见 §7.1），由 `fundai/cachestore.py` 按需读出 |
 
 ---
 

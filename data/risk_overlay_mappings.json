@@ -1,0 +1,134 @@
+{
+ "ok": true,
+ "n": 1137,
+ "select_days": 682,
+ "holdout_days": 455,
+ "mappings": {
+  "graded_0.4_0.7_1": {
+   "select": {
+    "nav": 0.7468,
+    "ann": -0.1023,
+    "mdd": 0.3767,
+    "switches": 262,
+    "sharpe": -0.345,
+    "exposure": 1.0
+   },
+   "holdout": {
+    "nav": 1.1078,
+    "ann": 0.0583,
+    "mdd": 0.1001,
+    "switches": 189,
+    "sharpe": 0.917,
+    "exposure": 1.0
+   }
+  },
+  "graded_0.3_0.7_1": {
+   "select": {
+    "nav": 0.7654,
+    "ann": -0.0941,
+    "mdd": 0.3586,
+    "switches": 262,
+    "sharpe": -0.29,
+    "exposure": 1.0
+   },
+   "holdout": {
+    "nav": 1.1193,
+    "ann": 0.0644,
+    "mdd": 0.1017,
+    "switches": 189,
+    "sharpe": 0.974,
+    "exposure": 1.0
+   }
+  },
+  "flat3_0_0.5_1": {
+   "select": {
+    "nav": 0.8305,
+    "ann": -0.0663,
+    "mdd": 0.2898,
+    "switches": 262,
+    "sharpe": -0.089,
+    "exposure": 0.521
+   },
+   "holdout": {
+    "nav": 1.1336,
+    "ann": 0.0719,
+    "mdd": 0.0942,
+    "switches": 189,
+    "sharpe": 1.18,
+    "exposure": 0.679
+   }
+  },
+  "flat_0_1_p50": {
+   "select": {
+    "nav": 0.969,
+    "ann": -0.0116,
+    "mdd": 0.1877,
+    "switches": 163,
+    "sharpe": 0.202,
+    "exposure": 0.391
+   },
+   "holdout": {
+    "nav": 1.1732,
+    "ann": 0.0925,
+    "mdd": 0.1078,
+    "switches": 116,
+    "sharpe": 1.135,
+    "exposure": 0.411
+   }
+  },
+  "flat_0_1_p52": {
+   "select": {
+    "nav": 0.9451,
+    "ann": -0.0206,
+    "mdd": 0.2066,
+    "switches": 153,
+    "sharpe": 0.121,
+    "exposure": 0.353
+   },
+   "holdout": {
+    "nav": 1.2641,
+    "ann": 0.1386,
+    "mdd": 0.084,
+    "switches": 96,
+    "sharpe": 1.592,
+    "exposure": 0.308
+   }
+  },
+  "floor3_flat": {
+   "select": {
+    "nav": 0.8679,
+    "ann": -0.051,
+    "mdd": 0.28,
+    "switches": 163,
+    "sharpe": -0.089,
+    "exposure": 1.0
+   },
+   "holdout": {
+    "nav": 1.1557,
+    "ann": 0.0835,
+    "mdd": 0.1028,
+    "switches": 116,
+    "sharpe": 1.008,
+    "exposure": 1.0
+   }
+  }
+ },
+ "buy_hold_select": {
+  "nav": 0.7177,
+  "ann": -0.1153,
+  "mdd": 0.4353,
+  "switches": 1,
+  "sharpe": -0.581,
+  "exposure": 1.0
+ },
+ "buy_hold_holdout": {
+  "nav": 1.1694,
+  "ann": 0.0905,
+  "mdd": 0.1342,
+  "switches": 1,
+  "sharpe": 0.594,
+  "exposure": 1.0
+ },
+ "selected": "flat_0_1_p50",
+ "note": "选择期按 年化−0.5×最大回撤 挑映射；留出期仅用于报告"
+}
