@@ -1,0 +1,88 @@
+{
+ "total": 483,
+ "by_event": {
+  "dict": {
+   "n": 378,
+   "hit": 45,
+   "bull": 74,
+   "bear": 45,
+   "neutral": 215,
+   "avg_chg": -0.007196,
+   "irrelevant": 44,
+   "hit_rate": 0.11904761904761904
+  },
+  "holder_flow": {
+   "n": 48,
+   "hit": 16,
+   "bull": 32,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.00698,
+   "hit_rate": 0.3333333333333333
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005961,
+   "hit_rate": 0.0
+  },
+  "earnings": {
+   "n": 11,
+   "hit": 11,
+   "bull": 0,
+   "bear": 11,
+   "neutral": 0,
+   "avg_chg": -0.007557,
+   "hit_rate": 1.0
+  },
+  "geo_conflict": {
+   "n": 11,
+   "hit": 11,
+   "bull": 0,
+   "bear": 11,
+   "neutral": 0,
+   "avg_chg": -0.006709,
+   "hit_rate": 1.0
+  },
+  "cbank_tight": {
+   "n": 10,
+   "hit": 10,
+   "bull": 0,
+   "bear": 10,
+   "neutral": 0,
+   "avg_chg": -0.007783,
+   "hit_rate": 1.0
+  },
+  "holdings_disclosure": {
+   "n": 7,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 7,
+   "avg_chg": -0.008405,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 2,
+   "hit": 0,
+   "bull": 2,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.00685,
+   "hit_rate": 0.0
+  },
+  "eco_data": {
+   "n": 2,
+   "hit": 2,
+   "bull": 0,
+   "bear": 2,
+   "neutral": 0,
+   "avg_chg": -0.008405,
+   "hit_rate": 1.0
+  }
+ },
+ "note": "样本逐日积累：每交易日收盘后运行 app.py signals-update 结算当日消息的下一交易日涨跌；样本充足后据此微调语义规则强度"
+}

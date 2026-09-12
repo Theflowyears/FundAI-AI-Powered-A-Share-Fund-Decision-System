@@ -1,0 +1,283 @@
+{
+ "base": "http://127.0.0.1:10008",
+ "rows": [
+  {
+   "status": 200,
+   "secs": 0.73,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"last\": {\"ok\": true, \"source\": \"demo\", \"demo\": true, \"start\": \"2026-03-06\", \"end\": \"2026-09-04\", \"days\": 126, \"warmup_days\": 0, \"consistency\": {\"ok\": true, \"seed\": 1000.0, \"cash\": 241.24,",
+   "path": "/api/backtest",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 1.18,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"cal\": {\"report\": {\"total\": 483, \"by_event\": {\"dict\": {\"n\": 378, \"hit\": 45, \"bull\": 74, \"bear\": 45, \"neutral\": 215, \"avg_chg\": -0.007196, \"irrelevant\": 44, \"hit_rate\": 0.11904761904761904",
+   "path": "/api/calibration",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.88,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"config\": {\"account\": {\"name\": \"AI基金1000挑战1500实验\", \"initial_cash\": 1000.0, \"target_value\": 1300.0, \"start_date\": null, \"end_date\": null, \"exec_mode\": \"manual\", \"target_multiple\": 1.3}, \"m",
+   "path": "/api/config",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.96,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"funds\": [{\"code\": \"270049\", \"name\": \"广发纯债债券C\", \"kind\": \"bond\", \"role\": \"primary\", \"buy_rate\": 0.0, \"sell_rate_lt7d\": 0.015, \"sell_rate_ge7d\": 0.0, \"min_buy\": 10.0, \"source\": \"config\", \"n",
+   "path": "/api/funds",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.95,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"snapshots\": [{\"date\": \"2026-03-06\", \"cash\": 1000.0, \"mv_eq\": 0.0, \"mv_bond\": 0.0, \"total\": 1000.0, \"fees\": 0.0, \"index_close\": 4711.11, \"note\": \"回放\"}, {\"date\": \"2026-03-09\", \"cash\": 1000",
+   "path": "/api/history",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 1.11,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"indices\": [{\"code\": \"000001\", \"name\": \"上证指数\", \"price\": 3888.1106, \"chg_pct\": -0.0118, \"chg_amt\": -46.293, \"benchmark\": false}, {\"code\": \"399001\", \"name\": \"深证成指\", \"price\": 13471.26, \"chg_",
+   "path": "/api/indices",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 1.34,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"micro\": {\"ok\": true, \"enabled\": true, \"date\": \"2026-09-11\", \"asof\": null, \"snap\": {\"schema\": 1, \"date\": \"2026-09-11\", \"zt\": 40, \"zb\": 19, \"dt\": 21, \"zt_nonst\": 40, \"zb_rate\": 0.322, \"pro",
+   "path": "/api/micro",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 1.0,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"stats\": {\"history\": [{\"date\": \"2026-09-10\", \"dir\": \"neutral\", \"confidence\": 0.5, \"created\": \"2026-09-10 23:58:05\", \"resolved_date\": \"2026-09-11\", \"next_chg\": -0.0084, \"hit\": 0, \"hit_txt\"",
+   "path": "/api/news/dirstats",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 1.18,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"news\": {\"date\": \"2026-09-11\", \"feed\": [{\"date\": \"2026-09-11\", \"item_id\": \"d86c149b098a\", \"source\": \"新浪7x24\", \"time\": \"2026-09-11 15:15\", \"title\": \"【国债期货收盘】 30年期主力合约跌0.15%， 10年期主力合约跌0.06%",
+   "path": "/api/news/screen",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.94,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"orders\": [{\"id\": 519, \"order_date\": \"2026-08-20\", \"fund_code\": \"005918\", \"action\": \"sell\", \"amount\": 128.0, \"note\": \"评分-34 走弱，权益目标降至 50%（当前 60%）；天弘沪深300ETF联接C 20日动量 +2.8%，减仓降低市场风险\", \"sta",
+   "path": "/api/orders",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.37,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"records\": [{\"date\": \"2026-09-04\", \"market_score\": -37, \"market_chg\": 0.0159, \"index_close\": 4563.56, \"view_title\": \"谨慎看空\", \"source\": \"内置引擎·纯量化（回放，不含消息面）\", \"analysis\": \"【盘面】沪深300收于 4563.5",
+   "path": "/api/records",
+   "method": "GET"
+  },
+  {
+   "status": 200,
+   "secs": 0.02,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"state\": {\"name\": \"AI基金1000挑战1500实验\", \"demo\": true, \"exec_mode\": \"manual\", \"data_source\": \"演示合成数据\", \"today\": \"2026-09-11\", \"start\": \"2026-03-06\", \"end\": \"2026-09-05\", \"days_left\": 0, \"est",
+   "path": "/api/state",
+   "method": "GET"
+  },
+  {
+   "status": 403,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，不写配置\"}",
+   "path": "/api/config/rollback",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，不写配置\"}",
+   "path": "/api/config/set",
+   "method": "POST"
+  },
+  {
+   "status": 400,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"方向判断已由 AI 自动记录，无需手动保存\"}",
+   "path": "/api/news/direction",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读\"}",
+   "path": "/api/news/rate",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.54,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读\"}",
+   "path": "/api/news/search/export",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读\"}",
+   "path": "/api/news/search/import",
+   "method": "POST"
+  },
+  {
+   "status": 404,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"订单不存在或不可确认\"}",
+   "path": "/api/orders/confirm",
+   "method": "POST"
+  },
+  {
+   "status": 404,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"订单不存在\"}",
+   "path": "/api/orders/fill",
+   "method": "POST"
+  },
+  {
+   "status": 404,
+   "secs": 1.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"订单不存在或当前状态不可跳过/撤销\"}",
+   "path": "/api/orders/skip",
+   "method": "POST"
+  },
+  {
+   "status": 200,
+   "secs": 0.57,
+   "json_ok": false,
+   "body": "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>AI 基金收益挑战 · 仪表盘</title>\n<link rel=\"stylesheet\" href=\"sty",
+   "path": "/",
+   "method": "GET",
+   "static": true
+  },
+  {
+   "status": 200,
+   "secs": 0.01,
+   "json_ok": false,
+   "body": "/* fundai 前端：状态渲染 + 图表（ECharts） */\n\"use strict\";\n\n/* ---------- 工具 ---------- */\nconst $ = (id) => document.getElementById(id);\nconst esc = (s) => String(s ?? \"\").replace(/[&<>\"]/g,\n  (c) => ({ \"&\": \"",
+   "path": "/app.js",
+   "method": "GET",
+   "static": true
+  },
+  {
+   "status": 200,
+   "secs": 0.53,
+   "json_ok": false,
+   "body": "/* fundai 仪表盘 —— 深色金融风 */\n:root {\n  --bg: #0b0f17;\n  --panel: #141b2b;\n  --panel2: #1a2336;\n  --line: #24304a;\n  --txt: #dfe6f3;\n  --mut: #8d99ae;\n  --gold: #f7b731;\n  --blue: #4e9cff;\n  --red: #ff4d4",
+   "path": "/style.css",
+   "method": "GET",
+   "static": true
+  },
+  {
+   "status": 200,
+   "secs": 0.01,
+   "json_ok": false,
+   "body": "\n/*\n* Licensed to the Apache Software Foundation (ASF) under one\n* or more contributor license agreements.  See the NOTICE file\n* distributed with this work for additional information\n* regarding copy",
+   "path": "/vendor/echarts.min.js",
+   "method": "GET",
+   "static": true
+  },
+  {
+   "status": 200,
+   "secs": 4.4,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"result\": {\"ok\": true, \"source\": \"demo\", \"demo\": true, \"start\": \"2026-03-06\", \"end\": \"2026-09-04\", \"days\": 126, \"warmup_days\": 0, \"consistency\": {\"ok\": true, \"seed\": 1000.0, \"cash\": 241.2",
+   "path": "/api/backtest",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.0,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，无需历史回填\"}",
+   "path": "/api/calibration/backfill",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.01,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，无需建模\"}",
+   "path": "/api/event-model/run",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，无需延伸历史\"}",
+   "path": "/api/history/extend",
+   "method": "POST"
+  },
+  {
+   "status": 200,
+   "secs": 3.13,
+   "json_ok": true,
+   "body": "{\"ok\": true, \"micro\": {\"ok\": true, \"enabled\": true, \"date\": \"2026-09-11\", \"asof\": null, \"snap\": {\"schema\": 1, \"date\": \"2026-09-11\", \"zt\": 40, \"zb\": 19, \"dt\": 21, \"zt_nonst\": 40, \"zb_rate\": 0.322, \"pro",
+   "path": "/api/micro/refresh",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.0,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库为只读；消息筛选请用正式库（python app.py serve）\"}",
+   "path": "/api/news/pull",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.0,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库为只读，动态筛选请用正式库\"}",
+   "path": "/api/pool/refresh",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.02,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库只读，持仓为合成数据无需刷新\"}",
+   "path": "/api/positions/refresh",
+   "method": "POST"
+  },
+  {
+   "status": 403,
+   "secs": 0.0,
+   "json_ok": true,
+   "body": "{\"ok\": false, \"message\": \"演示库为只读，请用正式库运行每日研判（python app.py run-daily）\"}",
+   "path": "/api/run-daily",
+   "method": "POST"
+  }
+ ],
+ "abnormal": 0,
+ "generated": "2026-09-11 21:26:28"
+}
