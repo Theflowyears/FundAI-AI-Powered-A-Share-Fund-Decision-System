@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fundai"
+version = "1.1.0"
+description = "A股场外基金 AI 每日研判与十年实证回测系统（1000→1500 实验）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "fundai" }]
+keywords = ["fund", "a-share", "quant", "backtest", "llm", "research"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
+# 只依赖标准库即可跑通主流程；numpy 让事件模型/情绪回补快 10 倍（可选）
+dependencies = []
+
+[project.optional-dependencies]
+fast = ["numpy>=1.24"]
+dev = ["numpy>=1.24"]
+
+[project.scripts]
+fundai = "app:main"
+
+[project.urls]
+Homepage = "https://example.invalid/fundai"
+
+[tool.setuptools]
+# app.py 是 CLI 入口（顶层模块）；fundai 是主包
+py-modules = ["app"]
+packages = ["fundai"]
+
+[tool.setuptools.package-data]
+fundai = ["static/*", "static/vendor/*"]
