@@ -1,0 +1,720 @@
+{
+ "generated": "2026-09-11 21:26:19",
+ "quick": true,
+ "rows": [
+  {
+   "name": "help:init",
+   "args": [
+    "init",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py init [-h] [--db DB] [--reset] [--cash CASH]",
+    "                   [--target-multiple TARGET_MULTIPLE] [--target TARGET]",
+    "options:"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:run-daily",
+   "args": [
+    "run-daily",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py run-daily [-h] [--db DB] [--force]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:state",
+   "args": [
+    "state",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py state [-h] [--db DB]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:demo",
+   "args": [
+    "demo",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py demo [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:backtest",
+   "args": [
+    "backtest",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py backtest [-h] [--months MONTHS] [--source {auto,live,demo}]",
+    "options:",
+    "  -h, --help            show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:refresh-pool",
+   "args": [
+    "refresh-pool",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py refresh-pool [-h] [--db DB] [--force]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:serve",
+   "args": [
+    "serve",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py serve [-h] [--demo] [--port PORT] [--host HOST]",
+    "options:",
+    "  -h, --help   show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:news-pull",
+   "args": [
+    "news-pull",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py news-pull [-h] [--date DATE] [--force]",
+    "options:",
+    "  -h, --help   show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:search-queue",
+   "args": [
+    "search-queue",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py search-queue [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:search-import",
+   "args": [
+    "search-import",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py search-import [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:doctor",
+   "args": [
+    "doctor",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py doctor [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:vendor-echarts",
+   "args": [
+    "vendor-echarts",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py vendor-echarts [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:oos",
+   "args": [
+    "oos",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py oos [-h] [--months MONTHS] [--test TEST]",
+    "                  [--source {auto,live,demo}]",
+    "options:"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:fetch-history",
+   "args": [
+    "fetch-history",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py fetch-history [-h] [--years YEARS] [--bench]",
+    "options:",
+    "  -h, --help     show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:signals-update",
+   "args": [
+    "signals-update",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py signals-update [-h] [--days DAYS]",
+    "options:",
+    "  -h, --help   show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:signals-report",
+   "args": [
+    "signals-report",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py signals-report [-h]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:cls-import",
+   "args": [
+    "cls-import",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py cls-import [-h] --file FILE [--date DATE]",
+    "options:",
+    "  -h, --help   show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:micro-pulse",
+   "args": [
+    "micro-pulse",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py micro-pulse [-h] [--date DATE] [--force] [--days DAYS]",
+    "options:",
+    "  -h, --help   show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:news-calibrate",
+   "args": [
+    "news-calibrate",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py news-calibrate [-h] [--days DAYS] [--max-pages MAX_PAGES]",
+    "                             [--delay DELAY] [--min-samples MIN_SAMPLES]",
+    "                             [--fresh] [--fetch-only] [--until UNTIL]"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:event-model",
+   "args": [
+    "event-model",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py event-model [-h] [--days DAYS] [--warmup WARMUP] [--band BAND]",
+    "                          [--min-edge MIN_EDGE] [--l2 L2] [--refit REFIT]",
+    "                          [--no-save] [--select]"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:news-fetch-db",
+   "args": [
+    "news-fetch-db",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py news-fetch-db [-h] [--days DAYS] [--until UNTIL]",
+    "                            [--max-pages MAX_PAGES] [--delay DELAY]",
+    "options:"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:news-score-db",
+   "args": [
+    "news-score-db",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py news-score-db [-h] [--limit LIMIT]",
+    "options:",
+    "  -h, --help     show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "help:intraday-pulse",
+   "args": [
+    "intraday-pulse",
+    "--help"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "usage: app.py intraday-pulse [-h] [--force] [--settle]",
+    "options:",
+    "  -h, --help  show this help message and exit"
+   ],
+   "err": [],
+   "kind": "help"
+  },
+  {
+   "name": "doctor",
+   "args": [
+    "doctor"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"interpreter\": \"C:\Users\<user>\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\",",
+    " \"python_stub\": false,"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "state(临时库)",
+   "args": [
+    "state",
+    "--db",
+    "C:\Users\<user>\\AppData\\Local\\Temp\\tmp7ywg349j\\audit.db"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"name\": \"AI基金1000挑战1500实验\",",
+    " \"demo\": false,"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "init(临时库)",
+   "args": [
+    "init",
+    "--db",
+    "C:\Users\<user>\\AppData\\Local\\Temp\\tmp7ywg349j\\audit.db",
+    "--cash",
+    "1000"
+   ],
+   "rc": 0,
+   "secs": 0.2,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"ok\": true,",
+    " \"db\": \"C:\Users\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmp7ywg349j\\\\audit.db\","
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "backtest(2月)",
+   "args": [
+    "backtest",
+    "--months",
+    "2",
+    "--source",
+    "live"
+   ],
+   "rc": 0,
+   "secs": 3.9,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"ok\": true,",
+    " \"source\": \"live\","
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "oos(12月)",
+   "args": [
+    "oos",
+    "--months",
+    "12",
+    "--test",
+    "0.35"
+   ],
+   "rc": 0,
+   "secs": 9.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"ok\": true,",
+    " \"source\": \"live\","
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "refresh-pool(临时库)",
+   "args": [
+    "refresh-pool",
+    "--db",
+    "C:\Users\<user>\\AppData\\Local\\Temp\\tmp7ywg349j\\audit.db"
+   ],
+   "rc": 0,
+   "secs": 1.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"ok\": true,",
+    " \"count\": 15,"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "run-daily(临时库,force)",
+   "args": [
+    "run-daily",
+    "--db",
+    "C:\Users\<user>\\AppData\\Local\\Temp\\tmp7ywg349j\\audit.db",
+    "--force"
+   ],
+   "rc": 0,
+   "secs": 35.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "== 2026-09-11 ==",
+    "状态   : ok",
+    "观点   : 破位下行，空仓防守 评分 -45 来源 LLM·Qwen"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "signals-report",
+   "args": [
+    "signals-report"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"total\": 483,",
+    " \"by_event\": {"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "signals-update(3天)",
+   "args": [
+    "signals-update",
+    "--days",
+    "3"
+   ],
+   "rc": 0,
+   "secs": 0.2,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"updated\": 483,",
+    " \"settled_total\": 483,"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "search-queue",
+   "args": [
+    "search-queue"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"queue_file\": \"<project-dir>\\\\fund200ai\\\\data\\\\search_queue.json\",",
+    " \"results_file\": \"<project-dir>\\\\fund200ai\\\\data\\\\search_results.json\","
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "search-import(无文件应优雅)",
+   "args": [
+    "search-import"
+   ],
+   "rc": 0,
+   "secs": 0.2,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"added\": 0,",
+    " \"note\": \"data/search_results.json 无内容\""
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "cls-import(文件不存在→优雅报错)",
+   "args": [
+    "cls-import",
+    "--file",
+    "<project-dir>\\fund200ai\\data\\__nope__.txt",
+    "--date",
+    "2026-09-10"
+   ],
+   "rc": 1,
+   "secs": 0.2,
+   "ok": true,
+   "expected_rc": 1,
+   "out": [
+    "文件无有效行（需 [{time,title,text},...] 或 JSONL）"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "micro-pulse(指定日)",
+   "args": [
+    "micro-pulse",
+    "--date",
+    "2026-09-10"
+   ],
+   "rc": 0,
+   "secs": 0.5,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "{",
+    " \"ok\": true,",
+    " \"date\": \"2026-09-10\","
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "intraday-pulse",
+   "args": [
+    "intraday-pulse"
+   ],
+   "rc": 0,
+   "secs": 0.4,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "【午间诊断 2026-09-11】；沪深300 上午 -0.84%（震荡）；风格：上证指数 -1.18%、深证成指 -1.08%、创业板指 -0.49%；消息面净情绪 +0.70（分 5，口径 cache，13 条在口径内）；风险过滤 P(次日上涨) 45%（risk_off）；下午观点：下午大概率维持震荡（neutral，-5 分）；盯：① 能否收回上午跌幅的一半 ② 跌停/炸板是否扩散 ③ 尾盘量能",
+    "午间观点自检：命中 1/1（100%）"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "news-score-db(limit 50)",
+   "args": [
+    "news-score-db",
+    "--limit",
+    "50"
+   ],
+   "rc": 0,
+   "secs": 1.6,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "打分完成：0 条（剩余 0）",
+    "库状态: {'telegrams': 1136582, 'scored': 1136582, 'days': 3675, 'from': '2016-08-20', 'to': '2026-09-11', 'size_mb': 960.7}"
+   ],
+   "err": [],
+   "kind": "run"
+  },
+  {
+   "name": "news-calibrate(60天)",
+   "args": [
+    "news-calibrate",
+    "--days",
+    "60"
+   ],
+   "rc": 0,
+   "secs": 0.7,
+   "ok": true,
+   "expected_rc": null,
+   "out": [
+    "窗口 2026-07-14 → 2026-09-10（43 个交易日，电报 28157 条）",
+    "基线：窗口内上涨日占比 48.8%｜日级方向命中率 48.8%｜IC -0.0402",
+    "日级均值：净利多 -0.135% / 净利空 +0.000%"
+   ],
+   "err": [],
+   "kind": "run"
+  }
+ ],
+ "failed": 0
+}

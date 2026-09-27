@@ -1,0 +1,26 @@
+{
+ "ok": true,
+ "days": 1322,
+ "filter": {
+  "nav": 1.1308,
+  "ann": 0.0237,
+  "mdd": 0.2271,
+  "switches": 285
+ },
+ "buy_hold": {
+  "nav": 0.901,
+  "ann": -0.0197,
+  "mdd": 0.4086
+ },
+ "signal_long_flat": {
+  "nav": 1.0433,
+  "ann": 0.0081,
+  "mdd": 0.2402,
+  "switches": 331
+ },
+ "cut_days": 783,
+ "cut_avg_ret": -0.041,
+ "hold_avg_ret": 0.056,
+ "worst5pct_caught": 0.5455,
+ "note": "风险过滤＝只降仓乘数（口线上同阈值）；纯信号＝P≥0.5 满仓否则空仓"
+}

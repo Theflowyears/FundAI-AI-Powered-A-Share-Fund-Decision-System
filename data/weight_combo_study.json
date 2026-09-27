@@ -1,0 +1,401 @@
+{
+ "rows": 1930,
+ "dd_limit": 25.0,
+ "combos": 5760,
+ "top_holdout_return": [
+  {
+   "cfg": "消息20%/情绪20% score基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.5,
+   "mdd": 20.13,
+   "ann": 5.4,
+   "ratio": 0.87,
+   "switches": 26,
+   "nav": 1.175,
+   "select": {
+    "ret": 10.76,
+    "mdd": 38.37,
+    "ann": 2.25,
+    "ratio": 0.28,
+    "switches": 52,
+    "nav": 1.1076
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% score基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.5,
+   "mdd": 20.13,
+   "ann": 5.4,
+   "ratio": 0.87,
+   "switches": 26,
+   "nav": 1.175,
+   "select": {
+    "ret": 10.76,
+    "mdd": 38.37,
+    "ann": 2.25,
+    "ratio": 0.28,
+    "switches": 52,
+    "nav": 1.1076
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% score基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.5,
+   "mdd": 20.13,
+   "ann": 5.4,
+   "ratio": 0.87,
+   "switches": 26,
+   "nav": 1.175,
+   "select": {
+    "ret": 10.76,
+    "mdd": 38.37,
+    "ann": 2.25,
+    "ratio": 0.28,
+    "switches": 52,
+    "nav": 1.1076
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% score基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.5,
+   "mdd": 20.13,
+   "ann": 5.4,
+   "ratio": 0.87,
+   "switches": 26,
+   "nav": 1.175,
+   "select": {
+    "ret": 10.76,
+    "mdd": 38.37,
+    "ann": 2.25,
+    "ratio": 0.28,
+    "switches": 52,
+    "nav": 1.1076
+   }
+  },
+  {
+   "cfg": "消息45%/情绪20% score基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.37,
+   "mdd": 20.45,
+   "ann": 5.37,
+   "ratio": 0.85,
+   "switches": 14,
+   "nav": 1.1737,
+   "select": {
+    "ret": 11.27,
+    "mdd": 38.67,
+    "ann": 2.35,
+    "ratio": 0.29,
+    "switches": 33,
+    "nav": 1.1127
+   }
+  },
+  {
+   "cfg": "消息45%/情绪20% score基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.37,
+   "mdd": 20.45,
+   "ann": 5.37,
+   "ratio": 0.85,
+   "switches": 14,
+   "nav": 1.1737,
+   "select": {
+    "ret": 11.27,
+    "mdd": 38.67,
+    "ann": 2.35,
+    "ratio": 0.29,
+    "switches": 33,
+    "nav": 1.1127
+   }
+  },
+  {
+   "cfg": "消息45%/情绪20% score基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.37,
+   "mdd": 20.45,
+   "ann": 5.37,
+   "ratio": 0.85,
+   "switches": 14,
+   "nav": 1.1737,
+   "select": {
+    "ret": 11.27,
+    "mdd": 38.67,
+    "ann": 2.35,
+    "ratio": 0.29,
+    "switches": 33,
+    "nav": 1.1127
+   }
+  },
+  {
+   "cfg": "消息45%/情绪20% score基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.37,
+   "mdd": 20.45,
+   "ann": 5.37,
+   "ratio": 0.85,
+   "switches": 14,
+   "nav": 1.1737,
+   "select": {
+    "ret": 11.27,
+    "mdd": 38.67,
+    "ann": 2.35,
+    "ratio": 0.29,
+    "switches": 33,
+    "nav": 1.1127
+   }
+  },
+  {
+   "cfg": "消息20%/情绪0% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪0% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪0% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪0% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪10% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪10% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪10% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪10% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% fixed基准100% 带关 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  },
+  {
+   "cfg": "消息20%/情绪20% fixed基准100% 带开 无风控 冷却— 上限100%",
+   "ret": 17.32,
+   "mdd": 21.42,
+   "ann": 5.35,
+   "ratio": 0.81,
+   "switches": 0,
+   "nav": 1.1732,
+   "select": {
+    "ret": 12.5,
+    "mdd": 39.59,
+    "ann": 2.6,
+    "ratio": 0.32,
+    "switches": 0,
+    "nav": 1.125
+   }
+  }
+ ],
+ "best_holdout": {
+  "cfg": "消息20%/情绪20% score基准100% 带关 无风控 冷却— 上限100%",
+  "w_news": 0.2,
+  "w_micro": 0.2,
+  "base_mode": "score",
+  "base": 1.0,
+  "band": false,
+  "react": "none",
+  "cap": 1.0,
+  "cool_cap": 0.25,
+  "select": {
+   "ret": 10.76,
+   "mdd": 38.37,
+   "ann": 2.25,
+   "ratio": 0.28,
+   "switches": 52,
+   "nav": 1.1076
+  },
+  "holdout": {
+   "ret": 17.5,
+   "mdd": 20.13,
+   "ann": 5.4,
+   "ratio": 0.87,
+   "switches": 26,
+   "nav": 1.175
+  }
+ },
+ "best_robust": {
+  "cfg": "消息20%/情绪0% score基准60% 带关 均线+冷却 冷却25% 上限80%",
+  "w_news": 0.2,
+  "w_micro": 0.0,
+  "base_mode": "score",
+  "base": 0.6,
+  "band": false,
+  "react": "ma_cut+cool",
+  "cap": 0.8,
+  "cool_cap": 0.25,
+  "select": {
+   "ret": 12.5,
+   "mdd": 18.18,
+   "ann": 2.6,
+   "ratio": 0.69,
+   "switches": 54,
+   "nav": 1.125
+  },
+  "holdout": {
+   "ret": 7.85,
+   "mdd": 9.61,
+   "ann": 2.5,
+   "ratio": 0.82,
+   "switches": 49,
+   "nav": 1.0785
+  }
+ }
+}

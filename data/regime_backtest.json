@@ -1,0 +1,1659 @@
+{
+ "windows": {
+  "full": {
+   "start": "2017-09-28",
+   "end": "2026-09-10",
+   "days": 2172
+  },
+  "bull": {
+   "start": "2020-03-23",
+   "end": "2021-01-27",
+   "days": 210
+  },
+  "bear": {
+   "start": "2021-02-18",
+   "end": "2022-05-16",
+   "days": 300
+  },
+  "range": {
+   "start": "2024-02-07",
+   "end": "2024-08-08",
+   "days": 120
+  }
+ },
+ "variants": {
+  "live": {
+   "name": "线上配置（固定70% + 基金级止损，指数级择时关）",
+   "patch": {},
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 141.7
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 13.6
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 20.4
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 13.8
+    }
+   }
+  },
+  "news_off": {
+   "name": "阉割消息面（news_weight=0 且关动态权重）",
+   "patch": {
+    "news_weight": "0.0",
+    "dynamic_weights": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 38.27,
+     "mdd": 25.42,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 141.9
+    },
+    "bull": {
+     "ret": 9.79,
+     "mdd": 12.27,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 256,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.0
+    },
+    "bear": {
+     "ret": -11.46,
+     "mdd": 12.36,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 274,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 20.6
+    },
+    "range": {
+     "ret": -8.28,
+     "mdd": 12.46,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 95,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.3
+    }
+   }
+  },
+  "news_zero_dyn_on": {
+   "name": "只把消息权重设 0（动态权重仍开 → 被限幅回 0.25）",
+   "patch": {
+    "news_weight": "0.0"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 143.0
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.1
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.0
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.5
+    }
+   }
+  },
+  "news_035": {
+   "name": "静态消息权重 35%（旧默认，关动态权重）",
+   "patch": {
+    "news_weight": "0.35",
+    "dynamic_weights": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 41.08,
+     "mdd": 21.99,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 493,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 142.5
+    },
+    "bull": {
+     "ret": 11.81,
+     "mdd": 11.61,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 280,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.6
+    },
+    "bear": {
+     "ret": -3.03,
+     "mdd": 11.77,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 288,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.0
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.7
+    }
+   }
+  },
+  "replay_news_off": {
+   "name": "回放不带消息面（纯量化，旧口径）",
+   "patch": {
+    "replay_news": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 38.27,
+     "mdd": 25.42,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 143.2
+    },
+    "bull": {
+     "ret": 9.79,
+     "mdd": 12.27,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 256,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.5
+    },
+    "bear": {
+     "ret": -11.46,
+     "mdd": 12.36,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 274,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.2
+    },
+    "range": {
+     "ret": -8.28,
+     "mdd": 12.46,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 95,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.5
+    }
+   }
+  },
+  "dict_full": {
+   "name": "词典兜底全量参与（news_dict_mode=full）",
+   "patch": {
+    "news_dict_mode": "full"
+   },
+   "res": {
+    "full": {
+     "ret": 72.41,
+     "mdd": 21.99,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 487,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 159.3
+    },
+    "bull": {
+     "ret": 11.81,
+     "mdd": 11.61,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 280,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 31.6
+    },
+    "bear": {
+     "ret": -4.45,
+     "mdd": 11.02,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 290,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 38.5
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 31.6
+    }
+   }
+  },
+  "micro_off": {
+   "name": "阉割情绪微观（micro_enable=false）",
+   "patch": {
+    "micro_enable": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 140.8
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.5
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.2
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.8
+    }
+   }
+  },
+  "dynw_off": {
+   "name": "关闭动态权重（静态 20%/10%）",
+   "patch": {
+    "dynamic_weights": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 50.83,
+     "mdd": 25.32,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 493,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 141.3
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.9
+    },
+    "bear": {
+     "ret": -7.52,
+     "mdd": 11.0,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.4
+    },
+    "range": {
+     "ret": -8.19,
+     "mdd": 12.37,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.6
+    }
+   }
+  },
+  "cooldown_on": {
+   "name": "开启回撤冷却（峰值回撤10% → 仓位≤25%，5 天）",
+   "patch": {
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 143.1
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.8
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.6
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.0
+    }
+   }
+  },
+  "ma_cut_on": {
+   "name": "开启均线减仓（破 MA60/120 各减 20%）",
+   "patch": {
+    "risk.ma_break_step": "0.2"
+   },
+   "res": {
+    "full": {
+     "ret": 54.96,
+     "mdd": 18.44,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 144.8
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.9
+    },
+    "bear": {
+     "ret": -12.3,
+     "mdd": 12.3,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.0
+    },
+    "range": {
+     "ret": -9.28,
+     "mdd": 12.24,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 111,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 14.8
+    }
+   }
+  },
+  "ma_cut_cool": {
+   "name": "均线减仓 + 回撤冷却同时开",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 54.96,
+     "mdd": 18.44,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 144.6
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.1
+    },
+    "bear": {
+     "ret": -12.3,
+     "mdd": 12.3,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.0
+    },
+    "range": {
+     "ret": -9.28,
+     "mdd": 12.24,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 111,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.1
+    }
+   }
+  },
+  "base_60": {
+   "name": "基准仓位降到 60%",
+   "patch": {
+    "equity_base_fixed": "0.6"
+   },
+   "res": {
+    "full": {
+     "ret": 52.07,
+     "mdd": 17.99,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 500,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 142.5
+    },
+    "bull": {
+     "ret": 12.2,
+     "mdd": 9.21,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 215,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.8
+    },
+    "bear": {
+     "ret": -8.7,
+     "mdd": 9.09,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 248,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.6
+    },
+    "range": {
+     "ret": -7.56,
+     "mdd": 11.24,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 100,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 32.7
+    }
+   }
+  },
+  "base_80": {
+   "name": "基准仓位升到 80%",
+   "patch": {
+    "equity_base_fixed": "0.8"
+   },
+   "res": {
+    "full": {
+     "ret": 127.75,
+     "mdd": 24.45,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 483,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 156.7
+    },
+    "bull": {
+     "ret": 25.47,
+     "mdd": 11.32,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 33.3
+    },
+    "bear": {
+     "ret": -9.43,
+     "mdd": 13.02,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 304,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.9
+    },
+    "range": {
+     "ret": -7.72,
+     "mdd": 12.58,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 116,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 33.2
+    }
+   }
+  },
+  "band_on": {
+   "name": "开启调整带 ±10%（制度+情绪）",
+   "patch": {
+    "position_band_max": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 156.7
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 32.6
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 40.1
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 33.5
+    }
+   }
+  },
+  "theme_off": {
+   "name": "阉割题材热度因子（theme_heat=0）",
+   "patch": {
+    "factor_weights": "None"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 155.3
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 33.7
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 40.5
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 33.7
+    }
+   }
+  },
+  "overlay_on": {
+   "name": "开启预测型过滤器（十年负贡献，默认关）",
+   "patch": {
+    "risk_overlay_enable": "True"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 155.3
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 33.5
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.3
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.9
+    }
+   }
+  },
+  "final_B": {
+   "name": "最终 B：MA减仓+回撤冷却（设计值 0.2/0.10）",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 54.96,
+     "mdd": 18.44,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 140.9
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.4
+    },
+    "bear": {
+     "ret": -12.3,
+     "mdd": 12.3,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.6
+    },
+    "range": {
+     "ret": -9.28,
+     "mdd": 12.24,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 111,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.3
+    }
+   }
+  },
+  "final_C": {
+   "name": "最终 C：B + 基准仓位 60%（更保守）",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1",
+    "equity_base_fixed": "0.6"
+   },
+   "res": {
+    "full": {
+     "ret": 48.52,
+     "mdd": 17.95,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 500,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 135.7
+    },
+    "bull": {
+     "ret": 3.37,
+     "mdd": 12.51,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 273,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.3
+    },
+    "bear": {
+     "ret": -6.81,
+     "mdd": 9.32,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 253,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.3
+    },
+    "range": {
+     "ret": -9.51,
+     "mdd": 11.8,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 98,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.1
+    }
+   }
+  },
+  "final_D": {
+   "name": "最终 D：B + 关动态权重（静态 20%/10%）",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1",
+    "dynamic_weights": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 69.76,
+     "mdd": 20.07,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 134.2
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.4
+    },
+    "bear": {
+     "ret": -12.87,
+     "mdd": 12.87,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 268,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.2
+    },
+    "range": {
+     "ret": -8.99,
+     "mdd": 11.96,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 109,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.1
+    }
+   }
+  },
+  "final_E": {
+   "name": "最终 E：B + 词典兜底全量参与",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1",
+    "news_dict_mode": "full"
+   },
+   "res": {
+    "full": {
+     "ret": 74.82,
+     "mdd": 19.34,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 486,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 144.2
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 32.4
+    },
+    "bear": {
+     "ret": -5.58,
+     "mdd": 10.47,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 274,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.4
+    },
+    "range": {
+     "ret": -9.12,
+     "mdd": 12.08,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 119,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 32.6
+    }
+   }
+  },
+  "final_F": {
+   "name": "最终 F：B + 消息 35%/关动态权重",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1",
+    "news_weight": "0.35",
+    "dynamic_weights": "False"
+   },
+   "res": {
+    "full": {
+     "ret": 48.4,
+     "mdd": 19.34,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 494,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 131.9
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 14.9
+    },
+    "bear": {
+     "ret": -7.65,
+     "mdd": 10.81,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.2
+    },
+    "range": {
+     "ret": -9.12,
+     "mdd": 12.08,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 119,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.4
+    }
+   }
+  },
+  "final_G": {
+   "name": "最终 G：B + 基准仓位 80%（更激进）",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1",
+    "equity_base_fixed": "0.8"
+   },
+   "res": {
+    "full": {
+     "ret": 79.01,
+     "mdd": 20.69,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 491,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 131.3
+    },
+    "bull": {
+     "ret": 7.3,
+     "mdd": 12.02,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 309,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.3
+    },
+    "bear": {
+     "ret": -8.96,
+     "mdd": 10.8,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 345,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.6
+    },
+    "range": {
+     "ret": -8.69,
+     "mdd": 12.23,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 118,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.7
+    }
+   }
+  },
+  "final_H": {
+   "name": "最终 H：B + 均线减仓步长 0.1（更温和）",
+   "patch": {
+    "risk.ma_break_step": "0.1",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 136.2
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 32.5
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.7
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 32.8
+    }
+   }
+  },
+  "final_I": {
+   "name": "最终 I：只回撤冷却（不叠均线减仓）",
+   "patch": {
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 69.92,
+     "mdd": 21.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 489,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 132.9
+    },
+    "bull": {
+     "ret": 12.27,
+     "mdd": 12.29,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 243,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 32.8
+    },
+    "bear": {
+     "ret": -7.98,
+     "mdd": 11.44,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 276,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 39.4
+    },
+    "range": {
+     "ret": -8.2,
+     "mdd": 12.38,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 99,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 32.9
+    }
+   }
+  },
+  "sens_ma005": {
+   "name": "敏感性：MA步长 0.05 + 回撤冷却",
+   "patch": {
+    "risk.ma_break_step": "0.05",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 49.9,
+     "mdd": 22.36,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 482,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 119.4
+    },
+    "bull": {
+     "ret": 7.12,
+     "mdd": 14.78,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 268,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.5
+    },
+    "bear": {
+     "ret": -9.56,
+     "mdd": 13.48,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 254,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.8
+    },
+    "range": {
+     "ret": -7.92,
+     "mdd": 11.52,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 102,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.8
+    }
+   }
+  },
+  "sens_ma015": {
+   "name": "敏感性：MA步长 0.15 + 回撤冷却",
+   "patch": {
+    "risk.ma_break_step": "0.15",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 76.37,
+     "mdd": 20.19,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 494,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 108.4
+    },
+    "bull": {
+     "ret": 7.42,
+     "mdd": 11.1,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 304,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.7
+    },
+    "bear": {
+     "ret": -10.78,
+     "mdd": 11.3,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 321,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.9
+    },
+    "range": {
+     "ret": -9.52,
+     "mdd": 12.54,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 121,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.6
+    }
+   }
+  },
+  "sens_ma020": {
+   "name": "敏感性：MA步长 0.20 + 回撤冷却（= final_B）",
+   "patch": {
+    "risk.ma_break_step": "0.2",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 54.96,
+     "mdd": 18.44,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 492,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 101.1
+    },
+    "bull": {
+     "ret": 11.1,
+     "mdd": 11.03,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 298,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.6
+    },
+    "bear": {
+     "ret": -12.3,
+     "mdd": 12.3,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 272,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.2
+    },
+    "range": {
+     "ret": -9.28,
+     "mdd": 12.24,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 111,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.4
+    }
+   }
+  },
+  "sens_ma030": {
+   "name": "敏感性：MA步长 0.30 + 回撤冷却",
+   "patch": {
+    "risk.ma_break_step": "0.3",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 58.36,
+     "mdd": 18.63,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 487,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 97.8
+    },
+    "bull": {
+     "ret": 8.59,
+     "mdd": 10.25,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 282,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.7
+    },
+    "bear": {
+     "ret": -6.54,
+     "mdd": 10.8,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 241,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 21.8
+    },
+    "range": {
+     "ret": -9.38,
+     "mdd": 12.05,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 106,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.5
+    }
+   }
+  },
+  "sens_cool008": {
+   "name": "敏感性：MA步长 0.1 + 冷却阈值 8%",
+   "patch": {
+    "risk.ma_break_step": "0.1",
+    "risk.peak_trailing_pct": "0.08"
+   },
+   "res": {
+    "full": {
+     "ret": 51.97,
+     "mdd": 14.71,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 482,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 99.4
+    },
+    "bull": {
+     "ret": 0.63,
+     "mdd": 12.82,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 250,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 15.7
+    },
+    "bear": {
+     "ret": -14.09,
+     "mdd": 14.09,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 188,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 22.3
+    },
+    "range": {
+     "ret": -7.58,
+     "mdd": 11.78,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 84,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 15.6
+    }
+   }
+  },
+  "sens_cool015": {
+   "name": "敏感性：MA步长 0.1 + 冷却阈值 15%",
+   "patch": {
+    "risk.ma_break_step": "0.1",
+    "risk.peak_trailing_pct": "0.15"
+   },
+   "res": {
+    "full": {
+     "ret": 71.71,
+     "mdd": 22.19,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 490,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 90.1
+    },
+    "bull": {
+     "ret": 15.0,
+     "mdd": 12.15,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 271,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 13.9
+    },
+    "bear": {
+     "ret": -10.48,
+     "mdd": 11.99,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 269,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 18.9
+    },
+    "range": {
+     "ret": -9.72,
+     "mdd": 13.83,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 96,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 13.7
+    }
+   }
+  },
+  "sens_no_cut": {
+   "name": "敏感性：MA步长 0（关均线减仓）+ 冷却 10%",
+   "patch": {
+    "risk.ma_break_step": "0.0",
+    "risk.peak_trailing_pct": "0.1"
+   },
+   "res": {
+    "full": {
+     "ret": 7.3,
+     "mdd": 26.23,
+     "bench": 12.19,
+     "days": 2148,
+     "trades": 468,
+     "fees": 0.0,
+     "start": "2017-11-08",
+     "end": "2026-09-10",
+     "secs": 71.6
+    },
+    "bull": {
+     "ret": 3.86,
+     "mdd": 11.69,
+     "bench": 36.24,
+     "days": 233,
+     "trades": 283,
+     "fees": 0.0,
+     "start": "2020-02-19",
+     "end": "2021-01-27",
+     "secs": 8.7
+    },
+    "bear": {
+     "ret": -4.11,
+     "mdd": 13.02,
+     "bench": -29.67,
+     "days": 312,
+     "trades": 263,
+     "fees": 0.0,
+     "start": "2021-01-26",
+     "end": "2022-05-16",
+     "secs": 13.1
+    },
+    "range": {
+     "ret": -8.61,
+     "mdd": 12.83,
+     "bench": -2.57,
+     "days": 146,
+     "trades": 92,
+     "fees": 0.0,
+     "start": "2024-01-02",
+     "end": "2024-08-08",
+     "secs": 10.2
+    }
+   }
+  }
+ }
+}

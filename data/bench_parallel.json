@@ -1,0 +1,18 @@
+{
+ "cpu": 32,
+ "jobs": null,
+ "steps": [
+  {
+   "step": "build_base",
+   "serial": 1.94,
+   "parallel": 0.9,
+   "speedup": 2.16
+  },
+  {
+   "step": "score_series",
+   "serial": 0.08,
+   "parallel": null,
+   "note": "过轻，并行反而更慢（0.7s）→ 保持串行"
+  }
+ ]
+}

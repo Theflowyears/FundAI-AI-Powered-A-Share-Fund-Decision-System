@@ -1,0 +1,32 @@
+# sdist 打包清单（wheel 用 pyproject 的 package-data 控制）
+include README.md
+include LICENSE
+include pyproject.toml
+include requirements.txt
+include config.example.json
+include app.py
+include *.bat
+include fundai_start_hidden.py
+
+# 前端静态资源（wheel 内副本由 tools/make_release.py 同步到 fundai/static/）
+recursive-include web/static *
+recursive-include fundai/static *
+
+# 测试与研究脚本（可复现性要求：结论必须能重跑）
+recursive-include tests *.py
+recursive-include data *.py
+recursive-include tools *.py
+
+# 排除体积大/含隐私的运行时产物
+prune data/cache
+prune data/demo
+prune dist
+prune build
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__/*
+exclude data/*.db
+exclude data/*.db-wal
+exclude data/*.db-shm
+exclude config.json
+exclude data/cls_history.json
