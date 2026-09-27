@@ -1,5 +1,5 @@
 {
- "updated": "2026-09-09 21:01:32",
+ "updated": "2026-09-25 21:30:16",
  "source": "dynamic",
  "items": [
   {
@@ -22,18 +22,7 @@
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": 0.04837898066278479
-  },
-  {
-   "code": "006697",
-   "name": "华宝中证银行ETF联接C",
-   "kind": "equity",
-   "role": "attack",
-   "buy_rate": 0.0,
-   "sell_rate_lt7d": 0.015,
-   "sell_rate_ge7d": 0.0,
-   "min_buy": 10.0,
-   "mom20": 0.043567139389293574
+   "mom20": 0.053828317243990176
   },
   {
    "code": "007818",
@@ -44,62 +33,40 @@
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": 0.0404949694824559
+   "mom20": 0.045858848956745746
   },
   {
-   "code": "004643",
-   "name": "南方中证房地产ETF发起联接C",
+   "code": "012734",
+   "name": "易方达中证人工智能主题ETF联接C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": 0.0267049216508497
+   "mom20": 0.03797923733168873
   },
   {
-   "code": "019405",
-   "name": "华夏中证全指运输ETF发起式联接C",
+   "code": "008586",
+   "name": "华夏人工智能ETF联接C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": 0.025797503467406502
+   "mom20": 0.03731782236455139
   },
   {
-   "code": "013035",
-   "name": "富国中证军工指数C",
+   "code": "024195",
+   "name": "永赢国证商用卫星通信产业ETF发起联接C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": 0.025270758122743597
-  },
-  {
-   "code": "000217",
-   "name": "华安黄金ETF联接C",
-   "kind": "equity",
-   "role": "attack",
-   "buy_rate": 0.0,
-   "sell_rate_lt7d": 0.015,
-   "sell_rate_ge7d": 0.0,
-   "min_buy": 10.0,
-   "mom20": 0.00670043096668671
-  },
-  {
-   "code": "002611",
-   "name": "博时黄金ETF联接C",
-   "kind": "equity",
-   "role": "attack",
-   "buy_rate": 0.0,
-   "sell_rate_lt7d": 0.015,
-   "sell_rate_ge7d": 0.0,
-   "min_buy": 10.0,
-   "mom20": 0.003634650333176337
+   "mom20": 0.030029788261814794
   },
   {
    "code": "005693",
@@ -110,7 +77,7 @@
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.004139874922927778
+   "mom20": 0.0273371897742114
   },
   {
    "code": "002199",
@@ -121,62 +88,95 @@
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.0044296788482834915
+   "mom20": 0.02699530516431925
   },
   {
-   "code": "014162",
-   "name": "万家人工智能混合C",
+   "code": "004643",
+   "name": "南方中证房地产ETF发起联接C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.0071544875906646155
+   "mom20": 0.02512673572845503
   },
   {
-   "code": "012700",
-   "name": "易方达中证全指证券公司ETF联接C",
+   "code": "025491",
+   "name": "平安中证卫星产业指数C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.007956152758132884
+   "mom20": 0.022760729249235556
   },
   {
-   "code": "024193",
-   "name": "国投瑞银中证全指公用事业ETF发起式联接C",
+   "code": "017628",
+   "name": "华商计算机行业量化股票发起式C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.009277857484457197
+   "mom20": 0.017929488837169272
   },
   {
-   "code": "007993",
-   "name": "华夏中证全指证券公司ETF联接C",
+   "code": "010236",
+   "name": "广发电子信息传媒股票C",
    "kind": "equity",
    "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.01200657894736834
+   "mom20": 0.016624551137119248
   },
   {
-   "code": "005918",
-   "name": "天弘沪深300ETF联接C",
+   "code": "006697",
+   "name": "华宝中证银行ETF联接C",
    "kind": "equity",
-   "role": "benchmark",
+   "role": "attack",
    "buy_rate": 0.0,
    "sell_rate_lt7d": 0.015,
    "sell_rate_ge7d": 0.0,
    "min_buy": 10.0,
-   "mom20": -0.026620605567973965
+   "mom20": 0.010346964064436248
+  },
+  {
+   "code": "007874",
+   "name": "华宝科技ETF联接C",
+   "kind": "equity",
+   "role": "attack",
+   "buy_rate": 0.0,
+   "sell_rate_lt7d": 0.015,
+   "sell_rate_ge7d": 0.0,
+   "min_buy": 10.0,
+   "mom20": 0.009164525044852878
+  },
+  {
+   "code": "020671",
+   "name": "易方达上证科创板芯片ETF联接发起式C",
+   "kind": "equity",
+   "role": "attack",
+   "buy_rate": 0.0,
+   "sell_rate_lt7d": 0.015,
+   "sell_rate_ge7d": 0.0,
+   "min_buy": 10.0,
+   "mom20": 0.00887397252481592
+  },
+  {
+   "code": "011609",
+   "name": "易方达上证科创50ETF联接C",
+   "kind": "equity",
+   "role": "attack",
+   "buy_rate": 0.0,
+   "sell_rate_lt7d": 0.015,
+   "sell_rate_ge7d": 0.0,
+   "min_buy": 10.0,
+   "mom20": -0.004695209294922842
   }
  ],
  "universe": 53
