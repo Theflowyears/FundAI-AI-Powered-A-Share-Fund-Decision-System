@@ -1,0 +1,906 @@
+{
+ "days": [
+  "2026-06-18",
+  "2026-06-22",
+  "2026-06-23",
+  "2026-06-24",
+  "2026-06-25",
+  "2026-06-26",
+  "2026-06-29",
+  "2026-06-30",
+  "2026-07-01",
+  "2026-07-02",
+  "2026-07-03",
+  "2026-07-06",
+  "2026-07-07",
+  "2026-07-08",
+  "2026-07-09",
+  "2026-07-10",
+  "2026-07-13",
+  "2026-07-14",
+  "2026-07-15",
+  "2026-07-16",
+  "2026-07-17",
+  "2026-07-20",
+  "2026-07-21",
+  "2026-07-22",
+  "2026-07-23",
+  "2026-07-24",
+  "2026-07-27",
+  "2026-07-28",
+  "2026-07-29",
+  "2026-07-30",
+  "2026-07-31",
+  "2026-08-03",
+  "2026-08-04",
+  "2026-08-05",
+  "2026-08-06",
+  "2026-08-07",
+  "2026-08-10",
+  "2026-08-11",
+  "2026-08-12",
+  "2026-08-13",
+  "2026-08-14",
+  "2026-08-17",
+  "2026-08-18",
+  "2026-08-19",
+  "2026-08-20",
+  "2026-08-21",
+  "2026-08-24",
+  "2026-08-25",
+  "2026-08-26",
+  "2026-08-27",
+  "2026-08-28",
+  "2026-08-31",
+  "2026-09-01",
+  "2026-09-02",
+  "2026-09-03",
+  "2026-09-04",
+  "2026-09-07",
+  "2026-09-08",
+  "2026-09-09",
+  "2026-09-10"
+ ],
+ "labels": {
+  "75c2165c4f17": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "港股研报，对A300次日影响有限",
+   "title": "中信证券：利空出尽或支撑港股行情延续"
+  },
+  "9ff2974fe8d7": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "市场大跌缩量，情绪偏空",
+   "title": "收评：创业板指、深成指均跌超2% 沪深两市成交额跌破2万亿"
+  },
+  "9c63a5d99a6c": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "地缘风险与油价波动，影响复杂",
+   "title": "周二你需要知道的隔夜全球要闻：特朗普称若谈判破裂将强力打击伊朗，苹果总市值逼近5万亿美元再次登榜全球第一、SK海力士美股"
+  },
+  "7da53b2b3281": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "市场反弹，科技股走强",
+   "title": "午评：创业板指半日涨1.73% 算力硬件股集体反弹"
+  },
+  "959eec500792": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "美方加征关税，地缘风险利空",
+   "title": "财联社8月28日早间新闻精选"
+  },
+  "82ff4837d79f": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "指数分化，个股普跌，影响中性",
+   "title": "午评：科创50指数半日涨3.6% 算力硬件、医药板块集体走强"
+  },
+  "f942f5d9d91a": {
+   "label": "big_bear",
+   "strength": -6,
+   "confidence": 0.9,
+   "reason": "军事打击伊朗，地缘冲突升级",
+   "title": "周三你需要知道的隔夜全球要闻：美军称开始对伊朗发动一系列打击；美国终止对伊朗石油制裁豁免 国际原油应声大涨；美股半导体、"
+  },
+  "02dad58a603a": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.8,
+   "reason": "沪指上涨，放量普涨",
+   "title": "午评：沪指半日涨0.76% 全市场近4500只个股上涨"
+  },
+  "0fcb916aad25": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.9,
+   "reason": "深成指大跌，个股普跌",
+   "title": "午评：深成指半日跌2.61% 全市场超4500只个股下挫"
+  },
+  "019f2d568477": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.9,
+   "reason": "三大指数全线下挫",
+   "title": "收评：科创50指数冲高回落跌超4% 半导体产业链集体调整"
+  },
+  "7abe74afc12a": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "上周五大跌回顾，情绪偏空",
+   "title": "上周五行情回顾"
+  },
+  "56bf4b22005b": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.8,
+   "reason": "市场大涨，赚钱效应强",
+   "title": "收评：创业板指大涨超3% 长鑫科技全天成交超1400亿"
+  },
+  "b7aeb611edd6": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.8,
+   "reason": "科创大涨，市场普涨",
+   "title": "午评：科创50指数半日涨近6% 全市场超4500只个股上涨"
+  },
+  "0f108a345d9a": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.8,
+   "reason": "创业板大涨，市场反弹",
+   "title": "收评：创业板指放量大涨5.64% 算力硬件股集体反弹"
+  },
+  "5202aac9cf5a": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.8,
+   "reason": "科创大涨，放量反弹",
+   "title": "收评：科创50指数大涨4.78% 沪深两市成交额放量超4400亿"
+  },
+  "882cbcebb830": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "沪指收涨，多数个股上涨",
+   "title": "收评：沪指震荡反弹涨0.67% 全市场超4000只个股上涨"
+  },
+  "6782dfed4559": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "连板分析，市场割裂，影响中性",
+   "title": "6月18日连板股分析：连板股晋级率不足三成 旭光电子、和远气体均走出11天6板"
+  },
+  "4387145d447b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "理财行业新闻，对指数影响小",
+   "title": "个别产品年化收益率近140% 银行理财指数化投资受青睐"
+  },
+  "4b96de141166": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "指数分化，个股普跌，影响中性",
+   "title": "午评：科创50指数半日涨4.18% 半导体、证券板块集体走强"
+  },
+  "9a239db0f6cd": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "券商看好下半年，偏乐观",
+   "title": "银河证券杨超：下半年A股建议AI“基建”等三条主线"
+  },
+  "35c90fb38396": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "券商策略观点，无宏观重大增量",
+   "title": "中信建投：AI算力虽景气逻辑不变但波动加剧 建议谨慎追高"
+  },
+  "dfdf13176c95": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "盘面复盘，非次日方向性宏观信号",
+   "title": "6月29日连板股分析：连板股晋级率仅12.5% 高位科技股向半导体方向缩圈"
+  },
+  "78da5cf37ea1": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "历史资金数据总结，非即时利好",
+   "title": "317.5万亿！总成交额较去年同期近乎翻倍 一图拆解2026上半年A股资金图谱"
+  },
+  "cff653f389cb": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.7,
+   "reason": "美股半导体大跌，地缘贸易摩擦",
+   "title": "周四你需要知道的隔夜全球要闻：特朗普称美伊在卡塔尔的会谈进展顺利 美股存储、半导体板块大跌"
+  },
+  "56039f79d2cf": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日收评，不直接决定次日方向",
+   "title": "收评：科创50指数大跌7.7% 算力硬件、半导体板块集体调整"
+  },
+  "f4bc3bbc31a6": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "地方政策推动AI产业，提振情绪",
+   "title": "孟凡利在广州调研人工智能产业发展时强调：加快全域全时全行业高水平应用 全力推动人工智能产业高质量发展"
+  },
+  "bc3ba1188115": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日午评，反映盘中状态",
+   "title": "午评：科创50指数半日涨超3% 算力租赁、半导体产业链集体走强"
+  },
+  "09f3041e834c": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "政策利好中药及AI，半导体景气",
+   "title": "今日投资舆情热点"
+  },
+  "fa2ebb069984": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日收评，反映盘中状态",
+   "title": "收评：创业板指、深成指均跌超3% 全市场逾百股跌停"
+  },
+  "aab4ddb41019": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.7,
+   "reason": "地方产业规划，对大盘影响有限",
+   "title": "上海：推进海洋传感器、海洋智能机器人、潜水器等关键装备研发应用"
+  },
+  "ba1f99ca513a": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "个股竞价数据，无宏观指向",
+   "title": "竞价看龙头"
+  },
+  "9fb5745c6ea6": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "个股并购重组，非系统性利好",
+   "title": "近20家A股上市公司本周披露并购重组最新公告 爱丽家居拟收购欧康诺不低于77.08%股权"
+  },
+  "3365fb9a9c3a": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日午评，反映盘中状态",
+   "title": "午评：科创50指数半日跌超6% 大消费板块逆势走强"
+  },
+  "676b40bed44b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日午评，反映盘中状态",
+   "title": "午评：科创50指数半日跌3.73% 沪深两市成交额半日萎缩超4200亿"
+  },
+  "cb19a0647eed": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日午评，反映盘中状态",
+   "title": "午评：创业板指半日涨4.83% CPO、算力租赁概念集体走强"
+  },
+  "6cf4643c8bd7": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.7,
+   "reason": "地方产业规划，对大盘影响有限",
+   "title": "上海张江高新技术产业开发区发展“十五五”规划：大力发展人工智能手机和电脑等新型智能终端"
+  },
+  "7c67867ca789": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "国家层面支持网信企业技术攻关",
+   "title": "《促进网信企业高质量发展行动计划（2026-2030年）》印发：加强高端芯片、基础软件和等关键核心技术攻关"
+  },
+  "a0c208d4efda": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.7,
+   "reason": "地方科技规划，非宏观重大利好",
+   "title": "上海：“十五五”可控核聚变聚焦突破高温超导磁体、智能控制等关键技术 建成托卡马克装置"
+  },
+  "56e1cadf5a07": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.7,
+   "reason": "地方产业规划，对大盘影响有限",
+   "title": "上海：支持微型发光二极管、硅基有机发光二极管、柔性显示等技术发展 突破光波导、驱动芯片、核心装备、关键材料等环节"
+  },
+  "75c594d83d63": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "当日收评，反映盘中状态",
+   "title": "收评：创业板指、深成指均跌超1% 农业、消费股逆势走强"
+  },
+  "f6de1f7a1c79": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "美股盘前资讯，对A股次日影响有限",
+   "title": "美股盘前要闻一览：谷歌从旧服务器中拆出DDR4以缓解内存瓶颈；英伟达同意以129亿美元收购Hugging Face；美光"
+  },
+  "29a0b8b4e412": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "当日收评，反映盘面震荡，无明确次日方向",
+   "title": "收评：科创50指数冲高回落跌超2% 猪肉概念逆势走强"
+  },
+  "580b8f4729e0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部事件，非权重板块，对指数影响小",
+   "title": "MLCC概念持续回升 昀冢科技涨超10%续创历史新高"
+  },
+  "6822d7ff46f0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "连板情绪分析，非宏观或权重，对指数无方向",
+   "title": "6月17日连板股分析：连板股晋级率34% 连板高度再度降至3板"
+  },
+  "e9f4b89f20cf": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "港股IPO事件，与A股沪深300无关",
+   "title": "独家｜具身智能独角兽酷哇科技拟赴港IPO 已完成超6亿美元新融资"
+  },
+  "b9b62a317ce9": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "地方产业政策利好AI板块，提振市场情绪",
+   "title": "广东：大力发展通用大模型和行业专用大模型 推动AI编程、数字营销、游戏文娱等业务重点发展"
+  },
+  "2441b29910f3": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部涨价，非权重板块，对指数影响小",
+   "title": "电子特气概念震荡回升 华特气体涨超10%创历史新高"
+  },
+  "d7129d2796fb": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "个股并购问询，对指数无影响",
+   "title": "安德利：收购标的甬强科技市占率不足1% 但已具备M8级别及以上高速覆铜板产品的研发及生产能力"
+  },
+  "69bff0ed0c65": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部涨价，非权重板块，对指数影响小",
+   "title": "PCB概念反复走强 中材科技13天7板续创历史新高"
+  },
+  "6b12ba4aa00b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "当日收评，反映盘面分化，无明确次日方向",
+   "title": "收评：创业板指放量反弹涨2.84% 全市场超4200只个股下挫"
+  },
+  "e4855a38e260": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "当日午评，反映盘面震荡，无明确次日方向",
+   "title": "午评：创业板指冲高回落跌1.28% 医药板块逆势走强"
+  },
+  "78fd2d30fc34": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部活跃，非权重板块，对指数影响小",
+   "title": "存储芯片概念反复活跃 时空科技涨停创历史新高"
+  },
+  "ab5175b5ebd7": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "个股并购事件，对指数无影响",
+   "title": "赛微微电：拟2.02亿元现金收购有容微电子60.01%股权 产品线将由电源管理芯片拓展至信号链芯片"
+  },
+  "f2fc93aecbce": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "当日午评，反映盘面分化，无明确次日方向",
+   "title": "午评：科创50指数半日大涨3.51% 寒武纪总市值突破万亿大关"
+  },
+  "7a604ded8456": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部反弹，非权重板块，对指数影响小",
+   "title": "PCB概念震荡反弹 方正科技封涨停"
+  },
+  "ecbb12cb2273": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "工信部政策利好科技与制造板块，提振情绪",
+   "title": "财联社6月30日晚间新闻精选"
+  },
+  "c06116f203d6": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "个股并购事件，对指数无影响",
+   "title": "安洁科技：拟现金收购苏州志烽51%股权 收购标的主要产品包括光模块芯片基座等"
+  },
+  "47a13dea80a8": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "当日午评，反映盘面分化，无明确次日方向",
+   "title": "午评：创业板指半日跌3.47% 有色金属、机器人概念逆势走强"
+  },
+  "5c3a3423fbe0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "券商行业研报，非宏观或权重，对指数影响小",
+   "title": "光大证券：半导体与AI浪潮驱动含氟新材料进入高速成长期"
+  },
+  "003eee1ffbe2": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业局部活跃，非权重板块，对指数影响小",
+   "title": "算力租赁概念反复活跃 华胜天成涨停"
+  },
+  "08792425f77b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "地方产业政策，非宏观权重",
+   "title": "上海市副市长陈杰：加快前沿模型、具身智能、智算芯片等关键领域技术全链突破"
+  },
+  "e5d4a4184070": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "收评行情，非次日方向",
+   "title": "收评：创业板指、科创50指数探底回升收红 电力、煤炭板块集体走强"
+  },
+  "706a77023ca2": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.95,
+   "reason": "盘前竞价，非次日方向",
+   "title": "竞价看龙头"
+  },
+  "d7f93c7ea946": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "收评行情，非次日方向",
+   "title": "收评：科创50指数探底回升大涨10.73% 半导体产业链全线爆发"
+  },
+  "ea342a94cc36": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "收评行情，非次日方向",
+   "title": "7月24日连板股分析：连板股晋级率26% 托伦斯走出20CM4天3板"
+  },
+  "096001a5f59b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "收评行情，非次日方向",
+   "title": "收评：科创50指数大跌超5% 大消费板块逆势走强"
+  },
+  "07b75cf8cabd": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "盘中异动，非次日方向",
+   "title": "光通信概念震荡反弹 宿迁联盛涨停"
+  },
+  "e92dd44a6222": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.7,
+   "reason": "海外事件，影响有限",
+   "title": "周六你需要知道的隔夜全球要闻：微软、亚马逊7月份市值合计增长超1万亿美元，沃什据悉考虑减少美联储政策会议的频率，美官员称"
+  },
+  "28a14dc82570": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "盘中异动，非次日方向",
+   "title": "电子特气概念午后反弹 昊华科技触及涨停"
+  },
+  "e031c55f9873": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "盘中异动，非次日方向",
+   "title": "电子特气概念反复活跃 和远气体涨停"
+  },
+  "7af63cf420e7": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "盘中异动，非次日方向",
+   "title": "MLCC概念反复活跃 风华高科逼近涨停"
+  },
+  "3f57b657aa5f": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "地方数据，非宏观权重",
+   "title": "全国首个 广东7月用电量突破千亿度"
+  },
+  "b9db97a5cc1a": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "行业研报，非宏观权重",
+   "title": "中信证券：算力突破电力边界 SST开启硅进铜退新周期"
+  },
+  "b50025558f88": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "地方产业规划，非宏观",
+   "title": "铜陵：推动高端电子铜材向光模块等场景拓展 突破极低轮廓铜箔制备技术"
+  },
+  "4fe381b8f4e1": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "国资委支持科技，利多权重",
+   "title": "国务院国资委：加快打造科技型企业 更好服务网络强国数字中国建设"
+  },
+  "14f63a64c066": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "午评行情，非次日方向",
+   "title": "午评：科创50指数半日跌0.57% 高位股集体下挫"
+  },
+  "a6931e5f6178": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "美股盘前，影响有限",
+   "title": "美股盘前要闻一览：AI芯片公司Cerebras盘前重挫16%；光通信龙头Coherent称订单已经排至2028年；Ant"
+  },
+  "72247d0b11a5": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.85,
+   "reason": "港股行情，非次日方向",
+   "title": "香港恒生指数收跌0.17% 联想集团大涨20%"
+  },
+  "37f79e2d1fc2": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.75,
+   "reason": "算力扩张利好科技权重",
+   "title": "国产算力迎扩张浪潮：大厂“超预期”加码投资 产业链多环节开启扩产"
+  },
+  "25b57aec99b6": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "收评行情，非次日方向",
+   "title": "收评：创业板指震荡反弹涨超1% 沪深两市成交额萎缩近4100亿"
+  },
+  "a47db1225ca0": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.9,
+   "reason": "市场普涨放量，情绪乐观",
+   "title": "收评：创业板指震荡反弹涨超3% 全市场超4300只个股上涨"
+  },
+  "c72e8b4d01ab": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.7,
+   "reason": "高位股跌停，短线情绪退潮",
+   "title": "竞价看龙头：爱丽家居、一鸣食品一字跌停"
+  },
+  "3e71ae3d799c": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "并购回暖，市场活跃度提升",
+   "title": "普华永道：2026年上半年中国并购市场强势回暖，量价齐升突破近三年高位"
+  },
+  "da6617cf2da0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.5,
+   "reason": "地方产业政策，对指数影响小",
+   "title": "上海：加快超导带材规模化发展 拓展核聚变、医疗装备磁体、密集型大容量输电等场景"
+  },
+  "6bd93ad9af05": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "政策利好多板块，支撑行情",
+   "title": "今日投资舆情热点"
+  },
+  "d1e9d15724f7": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "细分题材炒作，对指数影响有限",
+   "title": "液冷服务器概念持续走高 荣亿精密等近十股涨停"
+  },
+  "43bc10f88c54": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.5,
+   "reason": "科技突破，非市场级别利好",
+   "title": "我国团队在自主超导量子计算机上实现新突破 传输效率高达98%"
+  },
+  "ca7cbfa52258": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.5,
+   "reason": "行情回顾，无新增方向性信息",
+   "title": "昨日行情回顾"
+  },
+  "2cc7d7545915": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.4,
+   "reason": "行业观点，对指数影响微弱",
+   "title": "车百会张永伟：亟需突破具身智能产业四大核心底层硬件技术"
+  },
+  "fa963c2f4b96": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.4,
+   "reason": "海外个股合作，关联度低",
+   "title": "高通与亚马逊达成协议 共同建设人工智能数据中心基础设施"
+  },
+  "b537c8744fdb": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "细分题材异动，对指数影响有限",
+   "title": "芯片电感概念异动拉升 麦捷科技20cm涨停创历史新高"
+  },
+  "468615bce93e": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "科创芯片走强，提振科技权重",
+   "title": "科创芯片股持续走强 华虹宏力涨超10%续创历史新高"
+  },
+  "0536d8e0a7d2": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "半导体设备强势，利好科技股",
+   "title": "半导体设备概念延续强势 晶升股份20CM涨停"
+  },
+  "32aa7e1adef9": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.5,
+   "reason": "个股并购，非市场级事件",
+   "title": "汇成股份：拟设合资公司并收购郑隆芯创100%股权 设立后将作为公司HITS先进封装工艺研发及量产平台"
+  },
+  "2da825f5f579": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "部委政策利好AI及平台经济",
+   "title": "工信部等七部门：引导平台企业加强通用大模型、行业大模型和智能体等人工智能领域创新布局"
+  },
+  "7519dfa099d5": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.5,
+   "reason": "企业高管发言，非政策利好",
+   "title": "火山引擎总裁谭待：字节内部已大规模落地AI Coding生产流程"
+  },
+  "ff22e8c03537": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.4,
+   "reason": "美股行情，对A股直接影响小",
+   "title": "美股成交额排名生变：存储巨头占据第一和第三位 闪迪超越一众明星股"
+  },
+  "46b263e85fa0": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.6,
+   "reason": "算力芯片走强，利好科技板块",
+   "title": "算力芯片概念持续走强 航锦科技等多股涨停"
+  },
+  "d93e7f4cbeb0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.6,
+   "reason": "指数分化，超跌个股多",
+   "title": "午评：科创50半日涨超2% 芯片产业链大幅走强"
+  },
+  "352c0a6fbae1": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "芯片涨价利好半导体权重股",
+   "title": "科创芯片股持续走强 华虹宏力涨超10%续创历史新高"
+  },
+  "2002dc5c06ef": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "光纤概念反复走强 永鼎股份反包涨停创历史新高"
+  },
+  "c1292fb16bfe": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "产业政策，非宏观宽松",
+   "title": "刘国中在江苏调研时强调：打造生物医药新兴支柱产业 培育发展脑机接口未来产业"
+  },
+  "5fdf29ee9821": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "MLCC概念再度拉升 风华高科涨停创历史新高"
+  },
+  "98b74feea092": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "存储芯片概念大幅高开 太极实业一字涨停创历史新高"
+  },
+  "433b325c3313": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "盘面总结，无宏观方向",
+   "title": "6月24日连板股分析：连板股晋级率25% 算力硬件股卷土重来"
+  },
+  "01d5a1df2ab0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "靶材概念震荡走强 有研新材逼近涨停创历史新高"
+  },
+  "b5b9c29ea530": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "市场大跌，情绪受挫",
+   "title": "午评：创业板指半日跌3.72% 全市场近4600只个股下挫"
+  },
+  "5baf6bce8e94": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "MLCC概念反复活跃 洁美科技涨停创历史新高"
+  },
+  "88fbc14b0607": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "行业数据，非宏观",
+   "title": "今年以来算力相关产品加速出海 有武汉企业800G以上光模块出口同比增长超过100倍"
+  },
+  "e38d79f03d0f": {
+   "label": "bull",
+   "strength": 2,
+   "confidence": 0.7,
+   "reason": "工业利润数据向好",
+   "title": "国家统计局：1—5月份电子行业利润同比增长103.9% 对全部规模以上工业企业利润增长的贡献率达43.1%"
+  },
+  "88dadbbab09e": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "地方产业会议，非宏观",
+   "title": "浙江：要打造脑机接口产业发展的良好生态 引导社会资本加大投入"
+  },
+  "441884a428a7": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "小金属概念震荡反弹 株冶集团涨停"
+  },
+  "b373231ce41c": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "氟化工板块反复活跃 昊华科技触及涨停续创历史新高"
+  },
+  "09ea2c16043b": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "先进封装概念持续回暖 气派科技20cm涨停"
+  },
+  "c62f0c9a9fe3": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "市场大跌，情绪受挫",
+   "title": "7月2日连板股分析：连板股晋级率仅13% 机器人板块反复活跃"
+  },
+  "74f50cd3c56f": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "地方调研，非宏观",
+   "title": "张国清在新疆调研时强调 强化产业赋能 突出就业导向 提升中央企业援疆综合效益"
+  },
+  "b6ba4b79f096": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.8,
+   "reason": "地方产业报告，非宏观",
+   "title": "《北京数字经济发展报告（2025—2026）》发布 2025年人工智能核心产业规模约4500亿元"
+  },
+  "b10bf9eb275d": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "端侧AI概念震荡走强 瑞芯微涨停"
+  },
+  "13b40f4ae8c7": {
+   "label": "bear",
+   "strength": -2,
+   "confidence": 0.8,
+   "reason": "市场大跌，情绪受挫",
+   "title": "7月6日连板股分析：连板股晋级率不足二成 韬定律概念股局部活跃"
+  },
+  "e049a23e1bc0": {
+   "label": "neutral",
+   "strength": 0,
+   "confidence": 0.9,
+   "reason": "行业题材炒作，非权重",
+   "title": "算力芯片概念再度活跃 云天励飞涨超10%"
+  }
+ }
+}

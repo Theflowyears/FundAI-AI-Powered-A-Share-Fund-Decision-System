@@ -1,0 +1,48 @@
+{
+ "days": 2190,
+ "focus": [
+  "cbank_ease",
+  "cbank_tight",
+  "holder_flow",
+  "geo_conflict"
+ ],
+ "scale": 70.0,
+ "amp": 8,
+ "zero_naive_days": 2190,
+ "A_naive_keys": {
+  "pearson": 0.0,
+  "spearman": 0.0,
+  "neg_days": 0,
+  "nonzero_days": 0,
+  "days": 2190,
+  "low_mean_ret": 5.790688928976943e-05,
+  "high_mean_ret": 0.0004186643813944144,
+  "low_up_rate": 0.5,
+  "high_up_rate": 0.5342465753424658,
+  "all_up_rate": 0.5050228310502283
+ },
+ "B_legacy_blind": {
+  "pearson": 0.01848468978432377,
+  "spearman": -0.008145259537099986,
+  "neg_days": 0,
+  "nonzero_days": 2190,
+  "days": 2190,
+  "low_mean_ret": 0.0003972038204629152,
+  "high_mean_ret": 0.0007052981454225502,
+  "low_up_rate": 0.5182648401826484,
+  "high_up_rate": 0.502283105022831,
+  "all_up_rate": 0.5050228310502283
+ },
+ "C_label_signed": {
+  "pearson": 0.04057005955433763,
+  "spearman": 0.048383732121579995,
+  "neg_days": 1233,
+  "nonzero_days": 2145,
+  "days": 2190,
+  "low_mean_ret": -0.0007641977223543422,
+  "high_mean_ret": 0.001463238429257562,
+  "low_up_rate": 0.4748858447488584,
+  "high_up_rate": 0.5593607305936074,
+  "all_up_rate": 0.5050228310502283
+ }
+}

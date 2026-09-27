@@ -1,0 +1,884 @@
+{
+ "generated_at": "2026-09-11 21:25:30",
+ "window": {
+  "days": 60,
+  "from": "2026-07-14",
+  "to": "2026-09-10"
+ },
+ "data": {
+  "telegrams": 28157,
+  "classified_days": 43,
+  "source": "db",
+  "pages": 0,
+  "from_cache": true,
+  "cache_total": 28157,
+  "errors": []
+ },
+ "baseline_up_rate": 0.4884,
+ "day_level": {
+  "n": 43,
+  "directional_days": 43,
+  "hit_rate": 0.4884,
+  "ic": -0.0402,
+  "avg_ret_bull": -0.1352,
+  "avg_ret_bear": null,
+  "n_bull": 43,
+  "n_bear": 0
+ },
+ "day_rows": [
+  {
+   "date": "2026-07-14",
+   "next": "2026-07-15",
+   "score": 7,
+   "net": 0.9571428571428572,
+   "next_ret_pct": -0.203,
+   "hit": 0,
+   "n_news": 350,
+   "labels": {
+    "bull": 84,
+    "bear": 68,
+    "neutral": 92
+   }
+  },
+  {
+   "date": "2026-07-15",
+   "next": "2026-07-16",
+   "score": 64,
+   "net": 8.0,
+   "next_ret_pct": -1.846,
+   "hit": 0,
+   "n_news": 691,
+   "labels": {
+    "bull": 221,
+    "bear": 77,
+    "neutral": 214
+   }
+  },
+  {
+   "date": "2026-07-16",
+   "next": "2026-07-17",
+   "score": 38,
+   "net": 4.8428571428571425,
+   "next_ret_pct": -3.604,
+   "hit": 0,
+   "n_news": 662,
+   "labels": {
+    "bull": 168,
+    "bear": 80,
+    "neutral": 250
+   }
+  },
+  {
+   "date": "2026-07-17",
+   "next": "2026-07-20",
+   "score": 17,
+   "net": 2.2142857142857144,
+   "next_ret_pct": 1.528,
+   "hit": 1,
+   "n_news": 556,
+   "labels": {
+    "bull": 124,
+    "bear": 82,
+    "neutral": 210
+   }
+  },
+  {
+   "date": "2026-07-20",
+   "next": "2026-07-21",
+   "score": 59,
+   "net": 7.414285714285715,
+   "next_ret_pct": 3.064,
+   "hit": 1,
+   "n_news": 895,
+   "labels": {
+    "bull": 245,
+    "bear": 113,
+    "neutral": 299
+   }
+  },
+  {
+   "date": "2026-07-21",
+   "next": "2026-07-22",
+   "score": 47,
+   "net": 5.9714285714285715,
+   "next_ret_pct": -0.464,
+   "hit": 0,
+   "n_news": 633,
+   "labels": {
+    "bull": 188,
+    "bear": 62,
+    "neutral": 231
+   }
+  },
+  {
+   "date": "2026-07-22",
+   "next": "2026-07-23",
+   "score": 39,
+   "net": 4.928571428571429,
+   "next_ret_pct": 0.228,
+   "hit": 1,
+   "n_news": 577,
+   "labels": {
+    "bull": 150,
+    "bear": 65,
+    "neutral": 197
+   }
+  },
+  {
+   "date": "2026-07-23",
+   "next": "2026-07-24",
+   "score": 48,
+   "net": 6.014285714285714,
+   "next_ret_pct": -1.667,
+   "hit": 0,
+   "n_news": 636,
+   "labels": {
+    "bull": 182,
+    "bear": 65,
+    "neutral": 238
+   }
+  },
+  {
+   "date": "2026-07-24",
+   "next": "2026-07-27",
+   "score": 22,
+   "net": 2.7857142857142856,
+   "next_ret_pct": 1.145,
+   "hit": 1,
+   "n_news": 651,
+   "labels": {
+    "bull": 142,
+    "bear": 103,
+    "neutral": 247
+   }
+  },
+  {
+   "date": "2026-07-27",
+   "next": "2026-07-28",
+   "score": 19,
+   "net": 2.3857142857142857,
+   "next_ret_pct": -2.826,
+   "hit": 0,
+   "n_news": 803,
+   "labels": {
+    "bull": 155,
+    "bear": 107,
+    "neutral": 256
+   }
+  },
+  {
+   "date": "2026-07-28",
+   "next": "2026-07-29",
+   "score": 14,
+   "net": 1.7714285714285714,
+   "next_ret_pct": 0.673,
+   "hit": 1,
+   "n_news": 596,
+   "labels": {
+    "bull": 132,
+    "bear": 90,
+    "neutral": 230
+   }
+  },
+  {
+   "date": "2026-07-29",
+   "next": "2026-07-30",
+   "score": 20,
+   "net": 2.5285714285714285,
+   "next_ret_pct": -1.099,
+   "hit": 0,
+   "n_news": 638,
+   "labels": {
+    "bull": 134,
+    "bear": 80,
+    "neutral": 236
+   }
+  },
+  {
+   "date": "2026-07-30",
+   "next": "2026-07-31",
+   "score": 34,
+   "net": 4.3428571428571425,
+   "next_ret_pct": 0.846,
+   "hit": 1,
+   "n_news": 687,
+   "labels": {
+    "bull": 165,
+    "bear": 84,
+    "neutral": 239
+   }
+  },
+  {
+   "date": "2026-07-31",
+   "next": "2026-08-03",
+   "score": 64,
+   "net": 8.0,
+   "next_ret_pct": -0.981,
+   "hit": 0,
+   "n_news": 660,
+   "labels": {
+    "bull": 199,
+    "bear": 45,
+    "neutral": 226
+   }
+  },
+  {
+   "date": "2026-08-03",
+   "next": "2026-08-04",
+   "score": 45,
+   "net": 5.7,
+   "next_ret_pct": 1.271,
+   "hit": 1,
+   "n_news": 881,
+   "labels": {
+    "bull": 204,
+    "bear": 98,
+    "neutral": 297
+   }
+  },
+  {
+   "date": "2026-08-04",
+   "next": "2026-08-05",
+   "score": 43,
+   "net": 5.414285714285715,
+   "next_ret_pct": 1.244,
+   "hit": 1,
+   "n_news": 534,
+   "labels": {
+    "bull": 135,
+    "bear": 49,
+    "neutral": 194
+   }
+  },
+  {
+   "date": "2026-08-05",
+   "next": "2026-08-06",
+   "score": 51,
+   "net": 6.428571428571429,
+   "next_ret_pct": -0.147,
+   "hit": 0,
+   "n_news": 593,
+   "labels": {
+    "bull": 165,
+    "bear": 50,
+    "neutral": 229
+   }
+  },
+  {
+   "date": "2026-08-06",
+   "next": "2026-08-07",
+   "score": 33,
+   "net": 4.185714285714286,
+   "next_ret_pct": 0.927,
+   "hit": 1,
+   "n_news": 534,
+   "labels": {
+    "bull": 130,
+    "bear": 55,
+    "neutral": 212
+   }
+  },
+  {
+   "date": "2026-08-07",
+   "next": "2026-08-10",
+   "score": 28,
+   "net": 3.6,
+   "next_ret_pct": 0.161,
+   "hit": 1,
+   "n_news": 530,
+   "labels": {
+    "bull": 130,
+    "bear": 60,
+    "neutral": 202
+   }
+  },
+  {
+   "date": "2026-08-10",
+   "next": "2026-08-11",
+   "score": 36,
+   "net": 4.585714285714285,
+   "next_ret_pct": -0.813,
+   "hit": 0,
+   "n_news": 820,
+   "labels": {
+    "bull": 184,
+    "bear": 89,
+    "neutral": 261
+   }
+  },
+  {
+   "date": "2026-08-11",
+   "next": "2026-08-12",
+   "score": 29,
+   "net": 3.7,
+   "next_ret_pct": 0.582,
+   "hit": 1,
+   "n_news": 629,
+   "labels": {
+    "bull": 133,
+    "bear": 69,
+    "neutral": 241
+   }
+  },
+  {
+   "date": "2026-08-12",
+   "next": "2026-08-13",
+   "score": 48,
+   "net": 6.071428571428571,
+   "next_ret_pct": -0.575,
+   "hit": 0,
+   "n_news": 601,
+   "labels": {
+    "bull": 159,
+    "bear": 60,
+    "neutral": 216
+   }
+  },
+  {
+   "date": "2026-08-13",
+   "next": "2026-08-14",
+   "score": 52,
+   "net": 6.585714285714285,
+   "next_ret_pct": 0.041,
+   "hit": 1,
+   "n_news": 563,
+   "labels": {
+    "bull": 172,
+    "bear": 53,
+    "neutral": 179
+   }
+  },
+  {
+   "date": "2026-08-14",
+   "next": "2026-08-17",
+   "score": 44,
+   "net": 5.514285714285714,
+   "next_ret_pct": 1.612,
+   "hit": 1,
+   "n_news": 545,
+   "labels": {
+    "bull": 150,
+    "bear": 66,
+    "neutral": 182
+   }
+  },
+  {
+   "date": "2026-08-17",
+   "next": "2026-08-18",
+   "score": 60,
+   "net": 7.5,
+   "next_ret_pct": -0.322,
+   "hit": 0,
+   "n_news": 781,
+   "labels": {
+    "bull": 211,
+    "bear": 77,
+    "neutral": 232
+   }
+  },
+  {
+   "date": "2026-08-18",
+   "next": "2026-08-19",
+   "score": 41,
+   "net": 5.128571428571429,
+   "next_ret_pct": -2.901,
+   "hit": 0,
+   "n_news": 570,
+   "labels": {
+    "bull": 156,
+    "bear": 70,
+    "neutral": 191
+   }
+  },
+  {
+   "date": "2026-08-19",
+   "next": "2026-08-20",
+   "score": 17,
+   "net": 2.242857142857143,
+   "next_ret_pct": 0.088,
+   "hit": 1,
+   "n_news": 587,
+   "labels": {
+    "bull": 133,
+    "bear": 102,
+    "neutral": 202
+   }
+  },
+  {
+   "date": "2026-08-20",
+   "next": "2026-08-21",
+   "score": 60,
+   "net": 7.585714285714285,
+   "next_ret_pct": 0.569,
+   "hit": 1,
+   "n_news": 611,
+   "labels": {
+    "bull": 193,
+    "bear": 73,
+    "neutral": 199
+   }
+  },
+  {
+   "date": "2026-08-21",
+   "next": "2026-08-24",
+   "score": 50,
+   "net": 6.257142857142857,
+   "next_ret_pct": -1.207,
+   "hit": 0,
+   "n_news": 607,
+   "labels": {
+    "bull": 167,
+    "bear": 61,
+    "neutral": 216
+   }
+  },
+  {
+   "date": "2026-08-24",
+   "next": "2026-08-25",
+   "score": 32,
+   "net": 4.042857142857143,
+   "next_ret_pct": -0.243,
+   "hit": 0,
+   "n_news": 823,
+   "labels": {
+    "bull": 175,
+    "bear": 114,
+    "neutral": 268
+   }
+  },
+  {
+   "date": "2026-08-25",
+   "next": "2026-08-26",
+   "score": 46,
+   "net": 5.871428571428571,
+   "next_ret_pct": 0.851,
+   "hit": 1,
+   "n_news": 564,
+   "labels": {
+    "bull": 159,
+    "bear": 67,
+    "neutral": 196
+   }
+  },
+  {
+   "date": "2026-08-26",
+   "next": "2026-08-27",
+   "score": 38,
+   "net": 4.8,
+   "next_ret_pct": 0.86,
+   "hit": 1,
+   "n_news": 612,
+   "labels": {
+    "bull": 161,
+    "bear": 85,
+    "neutral": 216
+   }
+  },
+  {
+   "date": "2026-08-27",
+   "next": "2026-08-28",
+   "score": 47,
+   "net": 5.9714285714285715,
+   "next_ret_pct": -0.456,
+   "hit": 0,
+   "n_news": 618,
+   "labels": {
+    "bull": 174,
+    "bear": 76,
+    "neutral": 199
+   }
+  },
+  {
+   "date": "2026-08-28",
+   "next": "2026-08-31",
+   "score": 64,
+   "net": 8.0,
+   "next_ret_pct": 0.345,
+   "hit": 1,
+   "n_news": 693,
+   "labels": {
+    "bull": 207,
+    "bear": 68,
+    "neutral": 222
+   }
+  },
+  {
+   "date": "2026-08-31",
+   "next": "2026-09-01",
+   "score": 62,
+   "net": 7.871428571428571,
+   "next_ret_pct": -0.295,
+   "hit": 0,
+   "n_news": 916,
+   "labels": {
+    "bull": 237,
+    "bear": 129,
+    "neutral": 293
+   }
+  },
+  {
+   "date": "2026-09-01",
+   "next": "2026-09-02",
+   "score": 49,
+   "net": 6.185714285714286,
+   "next_ret_pct": -1.377,
+   "hit": 0,
+   "n_news": 603,
+   "labels": {
+    "bull": 160,
+    "bear": 49,
+    "neutral": 216
+   }
+  },
+  {
+   "date": "2026-09-02",
+   "next": "2026-09-03",
+   "score": 6,
+   "net": 0.8428571428571429,
+   "next_ret_pct": 0.102,
+   "hit": 1,
+   "n_news": 618,
+   "labels": {
+    "bull": 114,
+    "bear": 108,
+    "neutral": 213
+   }
+  },
+  {
+   "date": "2026-09-03",
+   "next": "2026-09-04",
+   "score": 19,
+   "net": 2.4571428571428573,
+   "next_ret_pct": -0.1,
+   "hit": 0,
+   "n_news": 630,
+   "labels": {
+    "bull": 140,
+    "bear": 82,
+    "neutral": 253
+   }
+  },
+  {
+   "date": "2026-09-04",
+   "next": "2026-09-07",
+   "score": 36,
+   "net": 4.6,
+   "next_ret_pct": 0.593,
+   "hit": 1,
+   "n_news": 636,
+   "labels": {
+    "bull": 163,
+    "bear": 75,
+    "neutral": 217
+   }
+  },
+  {
+   "date": "2026-09-07",
+   "next": "2026-09-08",
+   "score": 19,
+   "net": 2.4714285714285715,
+   "next_ret_pct": -0.356,
+   "hit": 0,
+   "n_news": 801,
+   "labels": {
+    "bull": 159,
+    "bear": 112,
+    "neutral": 285
+   }
+  },
+  {
+   "date": "2026-09-08",
+   "next": "2026-09-09",
+   "score": 16,
+   "net": 2.1142857142857143,
+   "next_ret_pct": 0.304,
+   "hit": 1,
+   "n_news": 527,
+   "labels": {
+    "bull": 103,
+    "bear": 76,
+    "neutral": 204
+   }
+  },
+  {
+   "date": "2026-09-09",
+   "next": "2026-09-10",
+   "score": 27,
+   "net": 3.4,
+   "next_ret_pct": -0.529,
+   "hit": 0,
+   "n_news": 615,
+   "labels": {
+    "bull": 136,
+    "bear": 90,
+    "neutral": 232
+   }
+  },
+  {
+   "date": "2026-09-10",
+   "next": "2026-09-11",
+   "score": 33,
+   "net": 4.142857142857143,
+   "next_ret_pct": -0.841,
+   "hit": 0,
+   "n_news": 556,
+   "labels": {
+    "bull": 131,
+    "bear": 68,
+    "neutral": 224
+   }
+  }
+ ],
+ "events": [
+  {
+   "event": "dict",
+   "event_cn": "词典兜底",
+   "label": "bull",
+   "n": 5601,
+   "hit_rate": 0.4705,
+   "baseline": 0.4884,
+   "edge": -0.0179,
+   "avg_ret_pct": -0.1399,
+   "z": -2.68,
+   "p": 0.0073,
+   "avg_strength": 4.21,
+   "samples": [
+    "闪迪遭市场抛售恐慌 高盛逆势上调目标价看好8月财报",
+    "财联社7月13日电，花旗集团将百胜餐饮集团目标价从175美元上调至178美元，将百胜餐饮集团评级维持在中性。",
+    "苹果股价升破6月初高点刷新记录新高 总市值报4.71万亿美元"
+   ],
+   "suggest_mult": 0.964
+  },
+  {
+   "event": "dict",
+   "event_cn": "词典兜底",
+   "label": "bear",
+   "n": 1728,
+   "hit_rate": 0.474,
+   "baseline": 0.5116,
+   "edge": -0.0377,
+   "avg_ret_pct": -0.0134,
+   "z": -3.13,
+   "p": 0.0017,
+   "avg_strength": -4.1,
+   "samples": [
+    "10天9板恒尚节能：拟收购标的金胜电子无研发、生产、制造存储芯片的能力 获取存储芯片的唯一途径即通过向上游供应商采购",
+    "费城半导体指数盘初跌幅扩大至3%",
+    "财联社7月13日电，美光科技股价下跌7.2%，报908.730美元/股，总市值报1.03万亿美元。"
+   ],
+   "suggest_mult": 0.926
+  },
+  {
+   "event": "geo_conflict",
+   "event_cn": "地缘冲突",
+   "label": "bear",
+   "n": 751,
+   "hit_rate": 0.5606,
+   "baseline": 0.5116,
+   "edge": 0.049,
+   "avg_ret_pct": -0.1752,
+   "z": 2.68,
+   "p": 0.0073,
+   "avg_strength": 3.12,
+   "samples": [
+    "沙特称应对胡塞武装导弹",
+    "胡塞武装威胁攻击沙特目标",
+    "特朗普已通知国会伊朗战事重新爆发"
+   ],
+   "suggest_mult": 1.095
+  },
+  {
+   "event": "holder_flow",
+   "event_cn": "股东增减持",
+   "label": "bull",
+   "n": 671,
+   "hit_rate": 0.465,
+   "baseline": 0.4884,
+   "edge": -0.0234,
+   "avg_ret_pct": -0.1284,
+   "z": -1.21,
+   "p": 0.2254,
+   "avg_strength": 2.0,
+   "samples": [
+    "财联社7月14日电，美联储周一隔夜逆回购协议（RRP）使用规模为7.95亿美元，上个交易日报5.45亿美元。",
+    "举牌减少 投资降速 险资入市节奏生变",
+    "投资日历：周二资本市场大事提醒"
+   ],
+   "suggest_mult": 0.955
+  },
+  {
+   "event": "earnings",
+   "event_cn": "业绩",
+   "label": "bear",
+   "n": 351,
+   "hit_rate": 0.5242,
+   "baseline": 0.5116,
+   "edge": 0.0126,
+   "avg_ret_pct": -0.2493,
+   "z": 0.47,
+   "p": 0.6371,
+   "avg_strength": 2.0,
+   "samples": [
+    "Omdia：二季度全球智能手机市场下滑4% 苹果与三星逆势增长",
+    "IDC：二季度全球智能手机出货量下滑6.7% 内存危机导致智能手机市场两极分化",
+    "IDC：2026Q2中国智能手机市场出货量同比下降4.3%"
+   ],
+   "suggest_mult": 1.024
+  },
+  {
+   "event": "cbank_tight",
+   "event_cn": "央行收紧",
+   "label": "bear",
+   "n": 326,
+   "hit_rate": 0.5337,
+   "baseline": 0.5116,
+   "edge": 0.0221,
+   "avg_ret_pct": -0.2167,
+   "z": 0.8,
+   "p": 0.4244,
+   "avg_strength": 4.09,
+   "samples": [
+    "财联社7月13日电，交易员提高对欧洲央行加息前景的押注，全面押注到9月份会加息25个基点。",
+    "美联储理事沃勒：如果核心通胀再次出现高位 美联储将需要考虑近期加息",
+    "财联社7月14日电，市场定价显示交易员预计美联储本月加息的概率为50%。"
+   ],
+   "suggest_mult": 1.042
+  },
+  {
+   "event": "earnings",
+   "event_cn": "业绩",
+   "label": "bull",
+   "n": 313,
+   "hit_rate": 0.4441,
+   "baseline": 0.4884,
+   "edge": -0.0443,
+   "avg_ret_pct": -0.1694,
+   "z": -1.57,
+   "p": 0.117,
+   "avg_strength": 2.0,
+   "samples": [
+    "财联社7月13日晚间新闻精选",
+    "深圳写字楼上半年成交量大增103%",
+    "景气度回升叠加新需求扩容 多家硅化工龙头上半年业绩大幅预喜"
+   ],
+   "suggest_mult": 0.917
+  },
+  {
+   "event": "industry_policy",
+   "event_cn": "产业政策",
+   "label": "bull",
+   "n": 213,
+   "hit_rate": 0.4695,
+   "baseline": 0.4884,
+   "edge": -0.0189,
+   "avg_ret_pct": -0.1193,
+   "z": -0.55,
+   "p": 0.5813,
+   "avg_strength": 2.0,
+   "samples": [
+    "财联社7月14日早间新闻精选",
+    "上海未来产业基金拟参与投资2只子基金",
+    "通富微电：上半年净利同比预增288%-337% 存储市场景气上行中高端产品营业收入明显增加"
+   ],
+   "suggest_mult": 0.965
+  },
+  {
+   "event": "holder_flow",
+   "event_cn": "股东增减持",
+   "label": "bear",
+   "n": 190,
+   "hit_rate": 0.5684,
+   "baseline": 0.5116,
+   "edge": 0.0568,
+   "avg_ret_pct": -0.1217,
+   "z": 1.57,
+   "p": 0.1173,
+   "avg_strength": 2.39,
+   "samples": [
+    "上半年10家券商20多名保代领罚单 “穿透式”监管向券商投行业务全链条纵深推进",
+    "A股限售股解禁一览：21.25亿元市值限售股今日解禁",
+    "獐子岛：持股5%以上股东和岛一号基金拟减持不超1.06%股份"
+   ],
+   "suggest_mult": 1.103
+  },
+  {
+   "event": "market_policy",
+   "event_cn": "市场政策",
+   "label": "bull",
+   "n": 103,
+   "hit_rate": 0.4272,
+   "baseline": 0.4884,
+   "edge": -0.0612,
+   "avg_ret_pct": -0.3521,
+   "z": -1.24,
+   "p": 0.2141,
+   "avg_strength": 3.24,
+   "samples": [
+    "上市公司分红回购增持三箭齐发协同加力",
+    "兴森科技：上半年净利同比预增247%-316% PCB行业景气度较好收入保持平稳增长",
+    "江西：积极培育宠物消费新热点 激发宠物产业新增量"
+   ],
+   "suggest_mult": 0.898
+  },
+  {
+   "event": "cbank_ease",
+   "event_cn": "央行宽松",
+   "label": "bull",
+   "n": 29,
+   "hit_rate": 0.5172,
+   "baseline": 0.4884,
+   "edge": 0.0289,
+   "avg_ret_pct": -0.0817,
+   "z": 0.31,
+   "p": 0.7558,
+   "avg_strength": 4.93,
+   "samples": [
+    "央行：根据流动性需要适当选择存款准备金、逆回购、MLF等工具",
+    "汇丰：市场高估欧洲央行加息预期 看好德国2年期国债",
+    "浙江城农商行存款利率上限下调5BP 专家：不是降息前奏"
+   ],
+   "suggest_mult": 1.034
+  },
+  {
+   "event": "eco_data",
+   "event_cn": "经济数据",
+   "label": "bear",
+   "n": 6,
+   "hit_rate": 0.8333,
+   "baseline": 0.5116,
+   "edge": 0.3217,
+   "avg_ret_pct": -0.435,
+   "z": 1.58,
+   "p": 0.1149,
+   "avg_strength": 2.0,
+   "samples": [
+    "财联社7月30日电，三星电子称，受全行业零部件成本上行压力影响，移动业务盈利出现下滑。System LSI业务上半年收入",
+    "硅业分会：下游需求疲软 本周硅片价格继续下跌",
+    "美银：下调亨利港天然气价格预测 预计今年四季度为3.35美元/百万英热单位"
+   ],
+   "suggest_mult": 1.092
+  }
+ ],
+ "suggest_multipliers": {
+  "dict|bull": 0.964,
+  "dict|bear": 0.926,
+  "geo_conflict|bear": 1.095,
+  "holder_flow|bull": 0.955,
+  "earnings|bear": 1.024,
+  "cbank_tight|bear": 1.042,
+  "earnings|bull": 0.917,
+  "industry_policy|bull": 0.965,
+  "holder_flow|bear": 1.103,
+  "market_policy|bull": 0.898,
+  "cbank_ease|bull": 1.034,
+  "eco_data|bear": 1.092
+ },
+ "net_mode": "scaled",
+ "net_scale": 70.0,
+ "notes": [
+  "打分口径与线上一致（news.score_item + news.net_score）",
+  "净情绪口径：scaled（刻度 70.0）——旧口径 clamp(Σ强度,±8) 实测天天顶格、零区分度",
+  "收盘 15:00 后电报算次日可得信息，规避未来函数",
+  "建议权重经 n/(n+20) 收缩，默认只报告；strategy.event_calibration=true 时才生效"
+ ]
+}

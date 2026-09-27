@@ -1,0 +1,486 @@
+{
+  "account": {
+    "name": "我的基金量化决策",
+    "initial_cash": 1000.0,
+    "target_value": 1300.0,
+    "start_date": null,
+    "end_date": null,
+    "exec_mode": "manual",
+    "target_multiple": 1.3
+  },
+  "market": {
+    "index": {
+      "name": "沪深300",
+      "zhitu_code": "000300.SH",
+      "eastmoney_secid": "1.000300"
+    },
+    "indices": [
+      {
+        "name": "上证指数",
+        "secid": "1.000001"
+      },
+      {
+        "name": "深证成指",
+        "secid": "0.399001"
+      },
+      {
+        "name": "创业板指",
+        "secid": "0.399006"
+      },
+      {
+        "name": "沪深300",
+        "secid": "1.000300",
+        "benchmark": true
+      },
+      {
+        "name": "科创50",
+        "secid": "1.000688"
+      },
+      {
+        "name": "中证500",
+        "secid": "1.000905"
+      }
+    ]
+  },
+  "data": {
+    "provider": "akshare",
+    "zhitu_token": "",
+    "zhitu_daily_limit": 200,
+    "note": "provider=akshare：基金净值走 AKShare（免费无配额）；指数走智兔(有Token时)/东财。智兔每日200次、300次/分；程序带缓存节流。东财接口与本地缓存做兜底。"
+  },
+  "pool": [
+    {
+      "code": "011609",
+      "name": "易方达上证科创50ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "008888",
+      "name": "华夏国证半导体芯片ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "012700",
+      "name": "易方达中证全指证券公司ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "011613",
+      "name": "华夏上证科创板50成份ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "008282",
+      "name": "国泰CES半导体芯片行业ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "008087",
+      "name": "华夏中证5G通信主题ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "008586",
+      "name": "华夏人工智能ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "001618",
+      "name": "天弘中证电子ETF联接C",
+      "kind": "equity",
+      "role": "attack",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "005918",
+      "name": "天弘沪深300ETF联接C",
+      "kind": "equity",
+      "role": "benchmark",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    },
+    {
+      "code": "270049",
+      "name": "广发纯债债券C",
+      "kind": "bond",
+      "role": "primary",
+      "buy_rate": 0.0,
+      "sell_rate_lt7d": 0.015,
+      "sell_rate_ge7d": 0.0,
+      "min_buy": 10.0
+    }
+  ],
+  "screening": {
+    "enabled": true,
+    "refresh_days": 7,
+    "min_total": 15,
+    "top_equity": 14,
+    "min_history_days": 120,
+    "note": "动态筛选：每7天(或手动)从 universe 候选里按20日动量重建备选池，保证总池>=15只；当前持仓与债基永远保留。",
+    "universe": [
+      {
+        "code": "011609",
+        "name": "易方达上证科创50ETF联接C"
+      },
+      {
+        "code": "008888",
+        "name": "华夏国证半导体芯片ETF联接C"
+      },
+      {
+        "code": "012700",
+        "name": "易方达中证全指证券公司ETF联接C"
+      },
+      {
+        "code": "011613",
+        "name": "华夏上证科创板50成份ETF联接C"
+      },
+      {
+        "code": "008282",
+        "name": "国泰CES半导体芯片行业ETF联接C"
+      },
+      {
+        "code": "008087",
+        "name": "华夏中证5G通信主题ETF联接C"
+      },
+      {
+        "code": "008586",
+        "name": "华夏人工智能ETF联接C"
+      },
+      {
+        "code": "001618",
+        "name": "天弘中证电子ETF联接C"
+      },
+      {
+        "code": "005918",
+        "name": "天弘沪深300ETF联接C"
+      },
+      {
+        "code": "013894",
+        "name": "国联安上证科创50ETF联接C"
+      },
+      {
+        "code": "019386",
+        "name": "东财上证科创50指数发起式C"
+      },
+      {
+        "code": "013811",
+        "name": "广发科创50ETF发起式联接C"
+      },
+      {
+        "code": "007301",
+        "name": "国联安中证全指半导体产品与设备ETF联接C"
+      },
+      {
+        "code": "012553",
+        "name": "天弘中证芯片产业ETF发起联接C"
+      },
+      {
+        "code": "015337",
+        "name": "嘉实中证芯片产业指数发起式C"
+      },
+      {
+        "code": "020483",
+        "name": "中欧中证芯片产业指数发起C"
+      },
+      {
+        "code": "013446",
+        "name": "东财中证芯片ETF发起式联接C"
+      },
+      {
+        "code": "020840",
+        "name": "南方中证半导体产业指数发起C"
+      },
+      {
+        "code": "014777",
+        "name": "富国中证芯片产业ETF发起式联接C"
+      },
+      {
+        "code": "012630",
+        "name": "广发国证半导体芯片ETF联接C"
+      },
+      {
+        "code": "020671",
+        "name": "易方达上证科创板芯片ETF联接发起式C"
+      },
+      {
+        "code": "007993",
+        "name": "华夏中证全指证券公司ETF联接C"
+      },
+      {
+        "code": "008591",
+        "name": "天弘中证全指证券公司ETF发起式联接C"
+      },
+      {
+        "code": "013597",
+        "name": "招商中证全指证券公司指数C"
+      },
+      {
+        "code": "012363",
+        "name": "国泰中证全指证券公司ETF联接C"
+      },
+      {
+        "code": "013035",
+        "name": "富国中证军工指数C"
+      },
+      {
+        "code": "005693",
+        "name": "广发中证军工ETF联接C"
+      },
+      {
+        "code": "002199",
+        "name": "前海开源中证军工指数C"
+      },
+      {
+        "code": "010236",
+        "name": "广发电子信息传媒股票C"
+      },
+      {
+        "code": "022831",
+        "name": "华商电子行业量化股票发起式C"
+      },
+      {
+        "code": "017628",
+        "name": "华商计算机行业量化股票发起式C"
+      },
+      {
+        "code": "010210",
+        "name": "国泰中证计算机主题ETF联接C"
+      },
+      {
+        "code": "001630",
+        "name": "天弘中证计算机主题ETF联接C"
+      },
+      {
+        "code": "012620",
+        "name": "嘉实中证软件服务ETF联接C"
+      },
+      {
+        "code": "007818",
+        "name": "国泰中证全指通信设备ETF联接C"
+      },
+      {
+        "code": "008327",
+        "name": "东财通信C"
+      },
+      {
+        "code": "012734",
+        "name": "易方达中证人工智能主题ETF联接C"
+      },
+      {
+        "code": "011840",
+        "name": "天弘中证人工智能主题ETF发起联接C"
+      },
+      {
+        "code": "005963",
+        "name": "宝盈人工智能股票C"
+      },
+      {
+        "code": "005763",
+        "name": "中欧电子信息产业沪港深股票C"
+      },
+      {
+        "code": "014162",
+        "name": "万家人工智能混合C"
+      },
+      {
+        "code": "006697",
+        "name": "华宝中证银行ETF联接C"
+      },
+      {
+        "code": "002611",
+        "name": "博时黄金ETF联接C"
+      },
+      {
+        "code": "000217",
+        "name": "华安黄金ETF联接C"
+      },
+      {
+        "code": "007077",
+        "name": "汇添富中证医药ETF联接C"
+      },
+      {
+        "code": "007874",
+        "name": "华宝科技ETF联接C"
+      },
+      {
+        "code": "012323",
+        "name": "华宝医疗ETF联接C"
+      },
+      {
+        "code": "004643",
+        "name": "南方中证房地产ETF发起联接C"
+      },
+      {
+        "code": "019405",
+        "name": "华夏中证全指运输ETF发起式联接C"
+      },
+      {
+        "code": "027738",
+        "name": "银华中证全指电力公用事业ETF发起式联接C"
+      },
+      {
+        "code": "024193",
+        "name": "国投瑞银中证全指公用事业ETF发起式联接C"
+      },
+      {
+        "code": "024195",
+        "name": "永赢国证商用卫星通信产业ETF发起联接C"
+      },
+      {
+        "code": "025491",
+        "name": "平安中证卫星产业指数C"
+      }
+    ]
+  },
+  "strategy": {
+    "eq_base": 0.6,
+    "eq_slope": 0.005,
+    "eq_floor": 0.1,
+    "eq_cap": 0.95,
+    "regime_step": 0.1,
+    "bond_buy_floor": 0.12,
+    "min_hold_days": 7,
+    "max_bond_weight": 0.35,
+    "mom_window": 20,
+    "rotate_gap": 0.05,
+    "min_order_yuan": 10.0,
+    "news_weight": 0.2,
+    "news_amp": 8,
+    "news_net_mode": "scaled",
+    "news_net_scale": 70.0,
+    "human_net_scale": 10.0,
+    "news_focus_events": [
+      "cbank_ease",
+      "cbank_tight",
+      "holder_flow",
+      "geo_conflict"
+    ],
+    "news_dict_mode": "off",
+    "news_include_other_events": false,
+    "news_llm_enable": true,
+    "news_llm_cap": 120,
+    "news_llm_contribute": false,
+    "risk_overlay_enable": false,
+    "dynamic_weights": true,
+    "dynamic_step": 0.03,
+    "news_weight_min": 0.25,
+    "news_weight_max": 0.4,
+    "micro_weight_min": 0.05,
+    "micro_weight_max": 0.15,
+    "equity_base_mode": "fixed",
+    "equity_base_fixed": 0.8,
+    "position_band_max": 0.0,
+    "equity_hard_cap": 0.8,
+    "band_vol_low": 0.6,
+    "band_vol_extreme": 0.9,
+    "band_micro_hot": 0.7,
+    "band_micro_cold": 0.3,
+    "rotate_winner_gain": 0.05,
+    "risk_overlay_mapping": "flat_0_1_p52",
+    "risk_overlay_smooth": 5,
+    "risk_overlay_min_hold": 10,
+    "risk_overlay_vol_pause": 0.9,
+    "risk_overlay_bull_vol_max": 0.0,
+    "risk_overlay_bull_floor": 0.8,
+    "risk_overlay_floor": 0.0,
+    "micro_enable": true,
+    "micro_hist_days": 7,
+    "micro_context_days": 30,
+    "micro_cache_days": 260,
+    "micro_weight": 0.1,
+    "micro_score_cap": 30,
+    "score_ema_enabled": false,
+    "score_ema_alpha": 0.4,
+    "top_n": 3,
+    "theme_max": 1,
+    "momentum_weight": 0.8,
+    "min_momentum": 0.0,
+    "relative_momentum": false,
+    "risk_adjusted": false,
+    "confidence_shrink": 1.0,
+    "use_fund_convert": true,
+    "factor_weights": {
+      "mom": 0.65,
+      "mom5": 0.15,
+      "vol": 0.2,
+      "bias": 0.0,
+      "heat": 0.0,
+      "theme_heat": 0.1
+    },
+    "risk": {
+      "fund_stop_loss_pct": -0.08,
+      "fund_take_profit_pct": 0.1,
+      "fund_take_profit_full_pct": 0.25,
+      "portfolio_stop_pct": -0.15,
+      "peak_trailing_pct": 0.1,
+      "reentry_score": 25,
+      "rearm_days": 5,
+      "ma_break_step": 0.1,
+      "ma_break_max": 0.4,
+      "ma_break_skip_ma20": true,
+      "ma_break_floor": 0.4,
+      "allow_rearm_trade": true,
+      "rearm_bull_score": 50,
+      "allow_early_exit_fee": false
+    },
+    "replay_news": true,
+    "news_score_cap": 25
+  },
+  "fees": {
+    "buy_rate_default": 0.0,
+    "sell_lt7d_default": 0.015,
+    "sell_ge7d_default": 0.0
+  },
+  "llm": {
+    "enabled": true,
+    "provider": "Qwen",
+    "api_key": "",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen3.8-flash",
+    "temperature": 0.4
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8787
+  }
+}
