@@ -4,3 +4,1139 @@
  "by_event": {}
 }
 提示：样本按交易日逐日积累（含下一交易日涨跌才结算），财联社电报历史无法自动回溯；可每天收盘后运行一次本命令。
+{
+ "updated": 0,
+ "settled_total": 0,
+ "by_event": {}
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算），财联社电报历史无法自动回溯；可每天收盘后运行一次本命令。
+{
+ "updated": 483,
+ "settled_total": 483,
+ "by_event": {
+  "dict": {
+   "n": 378,
+   "hit": 45,
+   "bull": 74,
+   "bear": 45,
+   "neutral": 215,
+   "avg_chg": -0.007196,
+   "irrelevant": 44,
+   "hit_rate": 0.11904761904761904
+  },
+  "holder_flow": {
+   "n": 48,
+   "hit": 16,
+   "bull": 32,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.00698,
+   "hit_rate": 0.3333333333333333
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005961,
+   "hit_rate": 0.0
+  },
+  "earnings": {
+   "n": 11,
+   "hit": 11,
+   "bull": 0,
+   "bear": 11,
+   "neutral": 0,
+   "avg_chg": -0.007557,
+   "hit_rate": 1.0
+  },
+  "geo_conflict": {
+   "n": 11,
+   "hit": 11,
+   "bull": 0,
+   "bear": 11,
+   "neutral": 0,
+   "avg_chg": -0.006709,
+   "hit_rate": 1.0
+  },
+  "cbank_tight": {
+   "n": 10,
+   "hit": 10,
+   "bull": 0,
+   "bear": 10,
+   "neutral": 0,
+   "avg_chg": -0.007783,
+   "hit_rate": 1.0
+  },
+  "holdings_disclosure": {
+   "n": 7,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 7,
+   "avg_chg": -0.008405,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 2,
+   "hit": 0,
+   "bull": 2,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.00685,
+   "hit_rate": 0.0
+  },
+  "eco_data": {
+   "n": 2,
+   "hit": 2,
+   "bull": 0,
+   "bear": 2,
+   "neutral": 0,
+   "avg_chg": -0.008405,
+   "hit_rate": 1.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 748,
+ "settled_total": 748,
+ "by_event": {
+  "dict": {
+   "n": 610,
+   "hit": 56,
+   "bull": 80,
+   "bear": 56,
+   "neutral": 408,
+   "avg_chg": -0.00566,
+   "irrelevant": 66,
+   "hit_rate": 0.09180327868852459
+  },
+  "holder_flow": {
+   "n": 53,
+   "hit": 16,
+   "bull": 37,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.00662,
+   "hit_rate": 0.3018867924528302
+  },
+  "cbank_tight": {
+   "n": 18,
+   "hit": 18,
+   "bull": 0,
+   "bear": 18,
+   "neutral": 0,
+   "avg_chg": -0.005727,
+   "hit_rate": 1.0
+  },
+  "geo_conflict": {
+   "n": 17,
+   "hit": 17,
+   "bull": 0,
+   "bear": 17,
+   "neutral": 0,
+   "avg_chg": -0.005455,
+   "hit_rate": 1.0
+  },
+  "earnings": {
+   "n": 15,
+   "hit": 13,
+   "bull": 2,
+   "bear": 13,
+   "neutral": 0,
+   "avg_chg": -0.006384,
+   "hit_rate": 0.8666666666666667
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 11,
+   "hit": 0,
+   "bull": 11,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003827,
+   "hit_rate": 0.0
+  },
+  "holdings_disclosure": {
+   "n": 7,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 7,
+   "avg_chg": -0.008407,
+   "hit_rate": 0.0
+  },
+  "eco_data": {
+   "n": 2,
+   "hit": 2,
+   "bull": 0,
+   "bear": 2,
+   "neutral": 0,
+   "avg_chg": -0.008407,
+   "hit_rate": 1.0
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003155,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 862,
+ "settled_total": 862,
+ "by_event": {
+  "dict": {
+   "n": 712,
+   "hit": 57,
+   "bull": 82,
+   "bear": 57,
+   "neutral": 491,
+   "avg_chg": -0.006954,
+   "irrelevant": 82,
+   "hit_rate": 0.0800561797752809
+  },
+  "holder_flow": {
+   "n": 55,
+   "hit": 16,
+   "bull": 39,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.006942,
+   "hit_rate": 0.2909090909090909
+  },
+  "cbank_tight": {
+   "n": 23,
+   "hit": 23,
+   "bull": 0,
+   "bear": 23,
+   "neutral": 0,
+   "avg_chg": -0.007161,
+   "hit_rate": 1.0
+  },
+  "geo_conflict": {
+   "n": 19,
+   "hit": 19,
+   "bull": 0,
+   "bear": 19,
+   "neutral": 0,
+   "avg_chg": -0.006696,
+   "hit_rate": 1.0
+  },
+  "earnings": {
+   "n": 18,
+   "hit": 16,
+   "bull": 2,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.007218,
+   "hit_rate": 0.8888888888888888
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 11,
+   "hit": 0,
+   "bull": 11,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.0067,
+   "hit_rate": 0.0
+  },
+  "holdings_disclosure": {
+   "n": 7,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 7,
+   "avg_chg": -0.008407,
+   "hit_rate": 0.0
+  },
+  "eco_data": {
+   "n": 2,
+   "hit": 2,
+   "bull": 0,
+   "bear": 2,
+   "neutral": 0,
+   "avg_chg": -0.008407,
+   "hit_rate": 1.0
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 977,
+ "settled_total": 977,
+ "by_event": {
+  "dict": {
+   "n": 795,
+   "hit": 55,
+   "bull": 82,
+   "bear": 55,
+   "neutral": 557,
+   "avg_chg": -0.005167,
+   "irrelevant": 101,
+   "hit_rate": 0.06918238993710692
+  },
+  "holder_flow": {
+   "n": 56,
+   "hit": 17,
+   "bull": 40,
+   "bear": 16,
+   "neutral": 0,
+   "avg_chg": -0.0067,
+   "hit_rate": 0.30357142857142855
+  },
+  "cbank_tight": {
+   "n": 26,
+   "hit": 23,
+   "bull": 0,
+   "bear": 26,
+   "neutral": 0,
+   "avg_chg": -0.00557,
+   "hit_rate": 0.8846153846153846
+  },
+  "market_broadcast": {
+   "n": 23,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006119,
+   "irrelevant": 23,
+   "hit_rate": 0.0
+  },
+  "geo_conflict": {
+   "n": 20,
+   "hit": 19,
+   "bull": 0,
+   "bear": 20,
+   "neutral": 0,
+   "avg_chg": -0.006029,
+   "hit_rate": 0.95
+  },
+  "earnings": {
+   "n": 19,
+   "hit": 16,
+   "bull": 2,
+   "bear": 17,
+   "neutral": 0,
+   "avg_chg": -0.006489,
+   "hit_rate": 0.8421052631578947
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 12,
+   "hit": 1,
+   "bull": 12,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.00559,
+   "hit_rate": 0.08333333333333333
+  },
+  "holdings_disclosure": {
+   "n": 7,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 7,
+   "avg_chg": -0.008407,
+   "hit_rate": 0.0
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.003394,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 1,
+   "hit": 1,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": 0.006631,
+   "hit_rate": 1.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1292,
+ "settled_total": 1292,
+ "by_event": {
+  "dict": {
+   "n": 1064,
+   "hit": 57,
+   "bull": 104,
+   "bear": 57,
+   "neutral": 747,
+   "avg_chg": -0.004979,
+   "irrelevant": 156,
+   "hit_rate": 0.05357142857142857
+  },
+  "holder_flow": {
+   "n": 72,
+   "hit": 17,
+   "bull": 40,
+   "bear": 16,
+   "neutral": 15,
+   "avg_chg": -0.006206,
+   "irrelevant": 1,
+   "hit_rate": 0.2361111111111111
+  },
+  "geo_conflict": {
+   "n": 27,
+   "hit": 20,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 1,
+   "avg_chg": -0.005624,
+   "irrelevant": 5,
+   "hit_rate": 0.7407407407407407
+  },
+  "cbank_tight": {
+   "n": 26,
+   "hit": 23,
+   "bull": 0,
+   "bear": 26,
+   "neutral": 0,
+   "avg_chg": -0.005551,
+   "hit_rate": 0.8846153846153846
+  },
+  "market_broadcast": {
+   "n": 26,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.005919,
+   "irrelevant": 26,
+   "hit_rate": 0.0
+  },
+  "earnings": {
+   "n": 23,
+   "hit": 16,
+   "bull": 2,
+   "bear": 17,
+   "neutral": 4,
+   "avg_chg": -0.006134,
+   "hit_rate": 0.6956521739130435
+  },
+  "holdings_disclosure": {
+   "n": 18,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 17,
+   "avg_chg": -0.006013,
+   "irrelevant": 1,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 14,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": -0.005421,
+   "hit_rate": 0.07142857142857142
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 4,
+   "hit": 1,
+   "bull": 3,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": -0.001668,
+   "hit_rate": 0.25
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1292,
+ "settled_total": 1292,
+ "by_event": {
+  "dict": {
+   "n": 1064,
+   "hit": 57,
+   "bull": 104,
+   "bear": 57,
+   "neutral": 747,
+   "avg_chg": -0.004979,
+   "irrelevant": 156,
+   "hit_rate": 0.05357142857142857
+  },
+  "holder_flow": {
+   "n": 72,
+   "hit": 17,
+   "bull": 40,
+   "bear": 16,
+   "neutral": 15,
+   "avg_chg": -0.006206,
+   "irrelevant": 1,
+   "hit_rate": 0.2361111111111111
+  },
+  "geo_conflict": {
+   "n": 27,
+   "hit": 20,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 1,
+   "avg_chg": -0.005624,
+   "irrelevant": 5,
+   "hit_rate": 0.7407407407407407
+  },
+  "cbank_tight": {
+   "n": 26,
+   "hit": 23,
+   "bull": 0,
+   "bear": 26,
+   "neutral": 0,
+   "avg_chg": -0.005551,
+   "hit_rate": 0.8846153846153846
+  },
+  "market_broadcast": {
+   "n": 26,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.005919,
+   "irrelevant": 26,
+   "hit_rate": 0.0
+  },
+  "earnings": {
+   "n": 23,
+   "hit": 16,
+   "bull": 2,
+   "bear": 17,
+   "neutral": 4,
+   "avg_chg": -0.006134,
+   "hit_rate": 0.6956521739130435
+  },
+  "holdings_disclosure": {
+   "n": 18,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 17,
+   "avg_chg": -0.006013,
+   "irrelevant": 1,
+   "hit_rate": 0.0
+  },
+  "industry_policy": {
+   "n": 14,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": -0.005421,
+   "hit_rate": 0.07142857142857142
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 4,
+   "hit": 1,
+   "bull": 3,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": -0.001668,
+   "hit_rate": 0.25
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1524,
+ "settled_total": 1524,
+ "by_event": {
+  "dict": {
+   "n": 1258,
+   "hit": 139,
+   "bull": 119,
+   "bear": 69,
+   "neutral": 838,
+   "avg_chg": -0.003585,
+   "irrelevant": 232,
+   "hit_rate": 0.11049284578696343
+  },
+  "holder_flow": {
+   "n": 85,
+   "hit": 27,
+   "bull": 41,
+   "bear": 17,
+   "neutral": 21,
+   "avg_chg": -0.004804,
+   "irrelevant": 6,
+   "hit_rate": 0.3176470588235294
+  },
+  "market_broadcast": {
+   "n": 35,
+   "hit": 2,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.002906,
+   "irrelevant": 35,
+   "hit_rate": 0.05714285714285714
+  },
+  "geo_conflict": {
+   "n": 33,
+   "hit": 22,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 2,
+   "avg_chg": -0.003669,
+   "irrelevant": 10,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_tight": {
+   "n": 29,
+   "hit": 26,
+   "bull": 1,
+   "bear": 26,
+   "neutral": 1,
+   "avg_chg": -0.004654,
+   "irrelevant": 1,
+   "hit_rate": 0.896551724137931
+  },
+  "earnings": {
+   "n": 26,
+   "hit": 17,
+   "bull": 2,
+   "bear": 18,
+   "neutral": 5,
+   "avg_chg": -0.004835,
+   "irrelevant": 1,
+   "hit_rate": 0.6538461538461539
+  },
+  "holdings_disclosure": {
+   "n": 20,
+   "hit": 1,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 19,
+   "avg_chg": -0.004999,
+   "irrelevant": 1,
+   "hit_rate": 0.05
+  },
+  "industry_policy": {
+   "n": 15,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 2,
+   "avg_chg": -0.004584,
+   "hit_rate": 0.06666666666666667
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 5,
+   "hit": 2,
+   "bull": 4,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": 9.3e-05,
+   "hit_rate": 0.4
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1643,
+ "settled_total": 1643,
+ "by_event": {
+  "dict": {
+   "n": 1366,
+   "hit": 141,
+   "bull": 121,
+   "bear": 71,
+   "neutral": 908,
+   "avg_chg": -0.003777,
+   "irrelevant": 266,
+   "hit_rate": 0.10322108345534407
+  },
+  "holder_flow": {
+   "n": 87,
+   "hit": 27,
+   "bull": 41,
+   "bear": 17,
+   "neutral": 23,
+   "avg_chg": -0.004832,
+   "irrelevant": 6,
+   "hit_rate": 0.3103448275862069
+  },
+  "market_broadcast": {
+   "n": 39,
+   "hit": 2,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003224,
+   "irrelevant": 39,
+   "hit_rate": 0.05128205128205128
+  },
+  "geo_conflict": {
+   "n": 35,
+   "hit": 22,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 4,
+   "avg_chg": -0.003803,
+   "irrelevant": 10,
+   "hit_rate": 0.6285714285714286
+  },
+  "cbank_tight": {
+   "n": 29,
+   "hit": 26,
+   "bull": 1,
+   "bear": 26,
+   "neutral": 1,
+   "avg_chg": -0.004654,
+   "irrelevant": 1,
+   "hit_rate": 0.896551724137931
+  },
+  "earnings": {
+   "n": 26,
+   "hit": 17,
+   "bull": 2,
+   "bear": 18,
+   "neutral": 5,
+   "avg_chg": -0.004835,
+   "irrelevant": 1,
+   "hit_rate": 0.6538461538461539
+  },
+  "holdings_disclosure": {
+   "n": 22,
+   "hit": 1,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 21,
+   "avg_chg": -0.005091,
+   "irrelevant": 1,
+   "hit_rate": 0.045454545454545456
+  },
+  "industry_policy": {
+   "n": 16,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 3,
+   "avg_chg": -0.004673,
+   "hit_rate": 0.0625
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 5,
+   "hit": 2,
+   "bull": 4,
+   "bear": 0,
+   "neutral": 1,
+   "avg_chg": 9.3e-05,
+   "hit_rate": 0.4
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1568,
+ "settled_total": 1760,
+ "by_event": {
+  "dict": {
+   "n": 1469,
+   "hit": 144,
+   "bull": 125,
+   "bear": 74,
+   "neutral": 954,
+   "avg_chg": -0.004725,
+   "irrelevant": 316,
+   "hit_rate": 0.09802586793737236
+  },
+  "holder_flow": {
+   "n": 92,
+   "hit": 28,
+   "bull": 41,
+   "bear": 18,
+   "neutral": 26,
+   "avg_chg": -0.005509,
+   "irrelevant": 7,
+   "hit_rate": 0.30434782608695654
+  },
+  "market_broadcast": {
+   "n": 41,
+   "hit": 2,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003911,
+   "irrelevant": 41,
+   "hit_rate": 0.04878048780487805
+  },
+  "geo_conflict": {
+   "n": 36,
+   "hit": 22,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 4,
+   "avg_chg": -0.004178,
+   "irrelevant": 11,
+   "hit_rate": 0.6111111111111112
+  },
+  "cbank_tight": {
+   "n": 32,
+   "hit": 26,
+   "bull": 1,
+   "bear": 26,
+   "neutral": 1,
+   "avg_chg": -0.00584,
+   "irrelevant": 4,
+   "hit_rate": 0.8125
+  },
+  "earnings": {
+   "n": 28,
+   "hit": 17,
+   "bull": 2,
+   "bear": 18,
+   "neutral": 7,
+   "avg_chg": -0.005725,
+   "irrelevant": 1,
+   "hit_rate": 0.6071428571428571
+  },
+  "holdings_disclosure": {
+   "n": 22,
+   "hit": 1,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 21,
+   "avg_chg": -0.005091,
+   "irrelevant": 1,
+   "hit_rate": 0.045454545454545456
+  },
+  "industry_policy": {
+   "n": 16,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 3,
+   "avg_chg": -0.004673,
+   "hit_rate": 0.0625
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 6,
+   "hit": 2,
+   "bull": 4,
+   "bear": 0,
+   "neutral": 2,
+   "avg_chg": -0.002806,
+   "hit_rate": 0.3333333333333333
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。
+{
+ "updated": 1277,
+ "settled_total": 1760,
+ "by_event": {
+  "dict": {
+   "n": 1469,
+   "hit": 144,
+   "bull": 125,
+   "bear": 74,
+   "neutral": 954,
+   "avg_chg": -0.004725,
+   "irrelevant": 316,
+   "hit_rate": 0.09802586793737236
+  },
+  "holder_flow": {
+   "n": 92,
+   "hit": 28,
+   "bull": 41,
+   "bear": 18,
+   "neutral": 26,
+   "avg_chg": -0.005509,
+   "irrelevant": 7,
+   "hit_rate": 0.30434782608695654
+  },
+  "market_broadcast": {
+   "n": 41,
+   "hit": 2,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003911,
+   "irrelevant": 41,
+   "hit_rate": 0.04878048780487805
+  },
+  "geo_conflict": {
+   "n": 36,
+   "hit": 22,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 4,
+   "avg_chg": -0.004178,
+   "irrelevant": 11,
+   "hit_rate": 0.6111111111111112
+  },
+  "cbank_tight": {
+   "n": 32,
+   "hit": 26,
+   "bull": 1,
+   "bear": 26,
+   "neutral": 1,
+   "avg_chg": -0.00584,
+   "irrelevant": 4,
+   "hit_rate": 0.8125
+  },
+  "earnings": {
+   "n": 28,
+   "hit": 17,
+   "bull": 2,
+   "bear": 18,
+   "neutral": 7,
+   "avg_chg": -0.005725,
+   "irrelevant": 1,
+   "hit_rate": 0.6071428571428571
+  },
+  "holdings_disclosure": {
+   "n": 22,
+   "hit": 1,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 21,
+   "avg_chg": -0.005091,
+   "irrelevant": 1,
+   "hit_rate": 0.045454545454545456
+  },
+  "industry_policy": {
+   "n": 16,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 3,
+   "avg_chg": -0.004673,
+   "hit_rate": 0.0625
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 6,
+   "hit": 2,
+   "bull": 4,
+   "bear": 0,
+   "neutral": 2,
+   "avg_chg": -0.002806,
+   "hit_rate": 0.3333333333333333
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ }
+}
+提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；历史电报可用 python app.py news-calibrate --days 90 一次性回填校准（时间游标回溯，已实测可用），不必再手工导入。

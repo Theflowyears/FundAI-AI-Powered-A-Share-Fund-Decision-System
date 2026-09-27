@@ -1,5 +1,121 @@
 {
- "total": 0,
- "by_event": {},
+ "total": 1760,
+ "by_event": {
+  "dict": {
+   "n": 1469,
+   "hit": 144,
+   "bull": 125,
+   "bear": 74,
+   "neutral": 954,
+   "avg_chg": -0.004725,
+   "irrelevant": 316,
+   "hit_rate": 0.09802586793737236
+  },
+  "holder_flow": {
+   "n": 92,
+   "hit": 28,
+   "bull": 41,
+   "bear": 18,
+   "neutral": 26,
+   "avg_chg": -0.005509,
+   "irrelevant": 7,
+   "hit_rate": 0.30434782608695654
+  },
+  "market_broadcast": {
+   "n": 41,
+   "hit": 2,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.003911,
+   "irrelevant": 41,
+   "hit_rate": 0.04878048780487805
+  },
+  "geo_conflict": {
+   "n": 36,
+   "hit": 22,
+   "bull": 0,
+   "bear": 21,
+   "neutral": 4,
+   "avg_chg": -0.004178,
+   "irrelevant": 11,
+   "hit_rate": 0.6111111111111112
+  },
+  "cbank_tight": {
+   "n": 32,
+   "hit": 26,
+   "bull": 1,
+   "bear": 26,
+   "neutral": 1,
+   "avg_chg": -0.00584,
+   "irrelevant": 4,
+   "hit_rate": 0.8125
+  },
+  "earnings": {
+   "n": 28,
+   "hit": 17,
+   "bull": 2,
+   "bear": 18,
+   "neutral": 7,
+   "avg_chg": -0.005725,
+   "irrelevant": 1,
+   "hit_rate": 0.6071428571428571
+  },
+  "holdings_disclosure": {
+   "n": 22,
+   "hit": 1,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 21,
+   "avg_chg": -0.005091,
+   "irrelevant": 1,
+   "hit_rate": 0.045454545454545456
+  },
+  "industry_policy": {
+   "n": 16,
+   "hit": 1,
+   "bull": 13,
+   "bear": 0,
+   "neutral": 3,
+   "avg_chg": -0.004673,
+   "hit_rate": 0.0625
+  },
+  "fund_premium_warning": {
+   "n": 14,
+   "hit": 0,
+   "bull": 0,
+   "bear": 0,
+   "neutral": 14,
+   "avg_chg": -0.005962,
+   "hit_rate": 0.0
+  },
+  "market_policy": {
+   "n": 6,
+   "hit": 2,
+   "bull": 4,
+   "bear": 0,
+   "neutral": 2,
+   "avg_chg": -0.002806,
+   "hit_rate": 0.3333333333333333
+  },
+  "eco_data": {
+   "n": 3,
+   "hit": 2,
+   "bull": 0,
+   "bear": 3,
+   "neutral": 0,
+   "avg_chg": -0.00334,
+   "hit_rate": 0.6666666666666666
+  },
+  "cbank_ease": {
+   "n": 1,
+   "hit": 0,
+   "bull": 1,
+   "bear": 0,
+   "neutral": 0,
+   "avg_chg": -0.006667,
+   "hit_rate": 0.0
+  }
+ },
  "note": "样本逐日积累：每交易日收盘后运行 app.py signals-update 结算当日消息的下一交易日涨跌；样本充足后据此微调语义规则强度"
 }
