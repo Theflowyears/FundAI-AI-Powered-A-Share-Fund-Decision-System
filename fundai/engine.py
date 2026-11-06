@@ -1393,9 +1393,10 @@ class Engine:
                           "20日动量": (round(w.get("mom") * 100, 2) if w.get("mom") is not None else None)}
                          for w in plan.get("winners", [])],
                 "风控建议": plan["msgs"],
-                "账户计划": "起始资金 {:.0f} 元 · 目标线 {:.0f} 元（+{:.0f}%；"
-                            "只能买卖场外基金，不能直接买股票）".format(
-                                _plan[0], _plan[1], (_plan[2] - 1) * 100),
+                # 2026-11 口径：不再把"目标线（+30%）"塞给模型——那是可配置的进度
+                # 基准，不是收益目标；写进提示词会诱导模型为凑数字给建议。
+                "账户计划": "起始资金 {:.0f} 元（只能买卖场外基金，不能直接买股票；"
+                            "本系统不承诺收益目标，按风控纪律给建议）".format(_plan[0]),
             }
             r = analysis.llm_analyze(self.cfg, pack)
             if r:

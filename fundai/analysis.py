@@ -2,7 +2,7 @@
 """大盘研判：量化评分 + 中文文案 +（可选）LLM 深度研判。"""
 import json
 
-from . import settings, util
+from . import util
 
 VIEWS = [
     # (阈值下限, key, 标题, 含义)
@@ -250,21 +250,22 @@ def llm_analyze(cfg, pack):
         return None
     base = (llm.get("base_url") or "https://api.deepseek.com").rstrip("/")
     provider = llm_label(cfg)
-    # 提示词里的本金/目标**不能写死**：本金可自定义、目标 = 本金 × 倍数（默认 1.3）
-    _initial, _target, _mult = settings.account_plan(cfg)
-    _pct = (_mult - 1.0) * 100
-    system = ("你是一位严守纪律的量化基金经理，受托用 {:.0f} 元人民币通过场外普通基金"
-              "（只能买基金、绝不直接买股票）在半年内尝试做到 {:.0f} 元"
-              "（较本金 +{:.0f}%）。"
-              "你每天收盘后对次日A股走势给出研判。要求：冷静、客观、给出可执行仓位结论；"
-              "只输出JSON。").format(_initial, _target, _pct)
+    # 提示词里**不写任何收益目标/倍数**（旧版会把账户起点换算成一个目标金额
+    # 写进受托职责，诱导模型为凑数字给建议，也与本系统的定位不符）：这是一个场外基金量化
+    # 决策助手，职责是基于当日数据给出冷静、可执行的研判与仓位结论并控制回撤。
+    system = ("你是一位严守纪律的量化基金经理，管理一个只投资场外普通基金"
+              "（只能买基金、绝不直接买股票）的人民币账户。"
+              "你每天收盘后基于当日数据包对次日A股走势给出研判。"
+              "要求：冷静、客观、给出可执行的仓位结论；优先考虑风险与回撤控制，"
+              "不为任何收益目标凑结论；本系统不承诺收益。"
+              "只输出JSON。")
     # 注意：下面这段提示词**含 JSON 字面花括号**（{"score": ...}），绝不能对它用
     # `str.format()`——花括号会被当成格式字段，实测直接 KeyError: '"score"'。
-    # 用 % 格式化（只有一个数字参数）即可，同时保留花括号原样。
+    # 这里不做任何格式化，字面原样拼进字符串即可。
     user = ("【今日数据包】\n" + json.dumps(pack, ensure_ascii=False) +
             "\n\n请输出 JSON：{\"score\": 整数 -100~100, \"title\": 不超过12字的观点短句, "
             "\"text\": 400字左右的中文研判，包含：盘面解读/技术信号/明日走势推演/"
-            "对 %.0f 元账户的仓位安排}。只输出JSON本身。" % _initial)
+            "对本账户的仓位安排（买入/持有/赎回与理由）}。只输出JSON本身。")
     try:
         js = util.http_post_json(
             base + "/chat/completions",

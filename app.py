@@ -3,7 +3,7 @@
 
 用法示例
 --------
-python app.py init                 # 初始化正式账户（1000 元起步）
+python app.py init                 # 初始化正式账户（起始资金可自定义）
 python app.py run-daily            # 每个交易日收盘后运行一次（研判+下单）
 python app.py run-daily --force    # 重跑当日
 python app.py demo                 # 用合成演示数据灌满演示库（离线体验）

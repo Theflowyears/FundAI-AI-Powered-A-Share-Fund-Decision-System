@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fundai"
-version = "1.2.0"
-description = "A股场外基金 AI 每日研判与十年实证回测系统（1000→1500 实验）"
+version = "1.2.1"
+description = "A股场外基金 AI 每日研判与量化决策系统（三路评分 + 约束组合 + 反应型风控）"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

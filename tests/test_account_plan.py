@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import fundai
 from fundai import configedit, settings
 from fundai.engine import Engine
 from fundai.ledger import Ledger
@@ -35,13 +36,15 @@ def _cfg(**acct):
 
 
 class LlmPromptTest(unittest.TestCase):
-    """LLM 提示词里的本金/目标必须**跟着配置走**，而且不能被花括号格式坑到。
+    """LLM 提示词的两条锁：① 含 JSON 字面花括号时不能被 `.format()` 炸掉；
+    ② **不得写入任何收益目标/倍数数字**（2026-11 口径：本系统是量化基金决策工具，
+    旧提示词写着"受托用 2000 元半年做到 2600 元（+30%）"，那会诱导模型为凑数字给建议）。
 
     2026-09-11 回归：把 target 写进提示词时给含 `{"score": ...}` 字面花括号的字符串
     接了 `.format()`，直接 `KeyError: '"score"'` —— `run-daily` 全线报错。
     """
 
-    def test_prompt_builds_and_contains_numbers(self):
+    def _call(self, **acct):
         from unittest import mock
         from fundai import analysis
         captured = {}
@@ -49,24 +52,33 @@ class LlmPromptTest(unittest.TestCase):
         def fake_post(*a, **kw):
             payload = a[1] if len(a) > 1 else kw.get("payload") or {}
             captured["messages"] = payload.get("messages") or []
-            # 注意：llm_analyze 对 <60 字的正文会判为无效并返回 None（防垃圾输出），
+            # llm_analyze 对 <60 字的正文会判为无效并返回 None（防垃圾输出），
             # 所以这里的假响应必须给足长度。
             return {"choices": [{"message": {"content": json.dumps(
                 {"score": 10, "title": "试",
                  "text": "测试正文。" * 20})}}],
                 "model": "test"}
 
-        cfg = _cfg(initial_cash=2000.0, target_multiple=1.3)
+        cfg = _cfg(**acct)
         cfg["llm"] = {"enabled": True, "api_key": "x", "provider": "t",
                       "base_url": "https://example.invalid", "model": "m"}
         with mock.patch.object(analysis.util, "http_post_json",
                                side_effect=fake_post):
             r = analysis.llm_analyze(cfg, {"日期": "2026-09-11"})
-        self.assertIsNotNone(r, "提示词构造失败会返回 None")
         joined = " ".join(m["content"] for m in captured["messages"])
-        self.assertIn("2000", joined)      # 本金
-        self.assertIn("2600", joined)      # 目标 = 2000 × 1.3
-        self.assertIn("30%", joined)       # 增长幅度
+        return r, joined
+
+    def test_prompt_builds_and_keeps_json_braces(self):
+        r, joined = self._call(initial_cash=2000.0, target_multiple=1.3)
+        self.assertIsNotNone(r, "提示词构造失败会返回 None")
+        self.assertIn('{"score"', joined, "字面花括号必须原样保留（.format 会炸）")
+
+    def test_prompt_carries_no_profit_target(self):
+        """本金、目标线、倍数、"半年"都不该出现在提示词里。"""
+        r, joined = self._call(initial_cash=2000.0, target_multiple=1.3)
+        for banned in ("2000", "2600", "1.3", "30%", "半年", "做到", "挑战"):
+            self.assertNotIn(banned, joined,
+                             "提示词不应向模型灌输收益目标：命中 {}".format(banned))
 
 
 class AccountPlanTest(unittest.TestCase):
@@ -232,6 +244,24 @@ class InitCliTest(unittest.TestCase):
         data = json.loads(out[out.index("{"):out.rindex("}") + 1])
         self.assertEqual(data["target_value"], 1400.0)
         self.assertAlmostEqual(data["target_multiple"], 1.4, places=6)
+
+
+class NarrativeHygieneTest(unittest.TestCase):
+    """包元数据与随包文档里不得再出现「起始金额 → 目标金额」式叙述。"""
+
+    BANNED = ("给AI 1000块", "做到1500", "挑战1500", "1000→1500")
+    FILES = ("pyproject.toml", "README.md", "README_TECH.md", "README_PORTABLE.md")
+
+    def test_no_target_narrative_in_shipped_text(self):
+        texts = [("fundai.__doc__", fundai.__doc__ or "")]
+        for rel in self.FILES:
+            p = ROOT / rel
+            if p.exists():
+                texts.append((rel, p.read_text(encoding="utf-8", errors="replace")))
+        for name, txt in texts:
+            for banned in self.BANNED:
+                self.assertNotIn(banned, txt,
+                                 "{} 命中旧叙述：{}".format(name, banned))
 
 
 if __name__ == "__main__":
