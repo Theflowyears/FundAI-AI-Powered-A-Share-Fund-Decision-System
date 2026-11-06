@@ -2,7 +2,8 @@
 """消息→次日大盘涨跌 的样本库与命中率校准（“训练”的可执行近似）。
 
 为什么这样设计（审计对话中的说明）：
-- 财联社历史电报接口需签名、无法自动回溯；公开免费源只能拿当日；
+- （**已更新**：财联社电报可用 `refresh_type=1` + `last_time` 时间游标回溯历史，
+  见 `calib_history.py` 与 README「四、数据底座」——历史回填由该模块负责）
 - 因此“十年新闻语料训练”不可直接做到，改为：从**今天起逐日积累**
   「当日已抓消息（AI/人工标签 + 事件类型）→ 下一交易日真实涨跌」样本，
   累积 N 天后即可对每类事件（央行宽松/地缘冲突/业绩/产品风险提示…）输出
@@ -45,6 +46,10 @@ def load_closes(cfg=None, refresh=False):
 
     refresh=True：先走一次 Market.index_history()（仅在当日 bar 缺失/为盘中快照时
     才会在线拉一次收盘bar），保证结算时能拿到“今日收盘”。
+
+    2026-09-11 加固：改走 `Market._index_cache_items()`（合并主指数可能存在的两个
+    缓存键）。事故中主缓存被兜底结果覆盖/缺失，直接读单一文件会让本函数静默归零，
+    进而让**所有**基于指数历史的校准与回测一起失效。
     """
     from .datasource import Market
     from . import settings
@@ -55,9 +60,14 @@ def load_closes(cfg=None, refresh=False):
             mkt.index_history()
         except Exception:
             pass
-    path = mkt._kline_cache_path(mkt._index_key())
-    cache = util.load_json(path, {"items": {}})
-    items = cache.get("items") or {}
+    try:
+        items = mkt._index_cache_items()
+    except Exception:
+        items = {}
+    if not items:
+        cache = util.load_json(mkt._kline_cache_path(mkt._index_key()),
+                               {"items": {}})
+        items = cache.get("items") or {}
     return {d: it[0] for d, it in items.items()}, sorted(items)
 
 

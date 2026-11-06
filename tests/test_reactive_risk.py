@@ -57,14 +57,18 @@ class PositionBandTest(unittest.TestCase):
 class ReactiveRiskConfigTest(unittest.TestCase):
     @needs_config
     def test_config_expectations(self):
-        """口径（2026-09-11 四窗口独立回测后定稿）：
-        基金级反应型风控保留（−8% 止损 / 止盈 / 组合 −15%），
-        指数级择时层**开启**（均线减仓 0.10 + 回撤冷却 0.10）——
-        基金级真实回测显示它们同时提高收益并压低回撤（README 6.4/6.5）。"""
+        """口径（2026-10 全历史 + 四窗口 + 时间顺序留出段后定稿）：
+        基金级止损/止盈默认关闭（无效换手拖累收益），指数级择时层**开启**
+        （均线减仓 0.10 + 回撤冷却 0.10）；组合层默认 adaptive：
+        趋势上行用旧动量加权、其余状态用等权，且不再按单只浮盈/浮亏自动卖。
+        证据见 README §25；旧行为可把 portfolio_method 改回 legacy、
+        两个 enable 开关打开。"""
         import json
         from pathlib import Path
         cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
         rk = cfg["strategy"]["risk"]
+        self.assertFalse(rk["fund_stop_loss_enable"])
+        self.assertFalse(rk["fund_take_profit_enable"])
         self.assertEqual(rk["fund_stop_loss_pct"], -0.08)
         self.assertEqual(rk["portfolio_stop_pct"], -0.15)
         self.assertEqual(rk["rearm_days"], 5)
@@ -74,12 +78,19 @@ class ReactiveRiskConfigTest(unittest.TestCase):
         self.assertEqual(rk["ma_break_max"], 0.4)
         self.assertTrue(rk["ma_break_skip_ma20"])
         self.assertEqual(rk["ma_break_floor"], 0.4)
+        # 组合层：制度自适应（20日大盘动量+评分门槛），趋势上行才用动量加权
+        self.assertEqual(cfg["strategy"]["portfolio_method"], "adaptive")
+        self.assertEqual(cfg["strategy"]["adaptive_signal"], "mom20")
+        self.assertEqual(cfg["strategy"]["adaptive_bull_score"], 25)
         # 预测型过滤默认关闭（十年回测不支持；且回放没有历史信号序列，无法验证）
         self.assertFalse(cfg["strategy"]["risk_overlay_enable"])
-        # 最终引用组合：固定 70% 基准 + 消息 20%/情绪 10% + 硬上限 80%
+        # 最终引用组合：固定基准 + 消息 20%/情绪 10% + 硬上限
+        # 2026-10 最新数据复核：90%/95% 档 DD 30.4% 越过 25% 约束；
+        # 80%/80% 档全历史 +172.3%/DD22.2，收益仍远高于旧策略 → 定稿 80/80。
         self.assertEqual(cfg["strategy"]["equity_base_mode"], "fixed")
-        self.assertEqual(cfg["strategy"]["equity_base_fixed"], 0.7)
+        self.assertEqual(cfg["strategy"]["equity_base_fixed"], 0.8)
         self.assertEqual(cfg["strategy"]["equity_hard_cap"], 0.8)
+        self.assertEqual(cfg["strategy"]["liquidity_reserve_yuan"], 200)
         self.assertEqual(cfg["strategy"]["news_weight"], 0.2)
         self.assertEqual(cfg["strategy"]["micro_weight"], 0.1)
         # 回放接入十年消息库（否则消息面在回测里完全不参与，见 README 6.4 结论 1）

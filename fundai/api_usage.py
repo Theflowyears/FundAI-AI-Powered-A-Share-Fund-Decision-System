@@ -72,6 +72,7 @@ import json
 import os
 import re
 import threading
+import time
 from pathlib import Path
 
 from . import util
@@ -97,14 +98,39 @@ SOURCES = ("zhitu", "akshare", "eastmoney", "sina", "tencent", "ths")
 # 各用途的通道优先级（用于判定「是否已降级」：不在首位即降级）
 # nav：akshare → zhitu → eastmoney（与 Market._nav_chain 一致，akshare 不可用时缺席）
 # index_kline：zhitu → eastmoney
-# quote：eastmoney（名义主源）→ sina → tencent —— 与 indices_quote 的
-#        “新浪优先”实现不同，这里以**东财**为主源，新浪/腾讯视为降级备胎：
-#        界面需要知道“现在是谁在供货”，而不是“谁先被调用”。
+# quote：sina → tencent → eastmoney —— **必须与实际实现（Market.indices_quote 的
+#        "新浪→腾讯→东财" 顺序）一致**。2026-09-15 修复：这张表原先把 eastmoney 写成
+#        首选，于是新浪每次正常供货都被判成"已降级"，界面那条降级提示永远不消失。
+#        判定表的语义是"首选可用即算正常"：表与实现不一致 = 永久误报。
 CHAIN_DEFAULT = {
     "nav": ("akshare", "zhitu", "eastmoney"),
     "index_kline": ("zhitu", "eastmoney"),
-    "quote": ("eastmoney", "sina", "tencent"),
+    "quote": ("sina", "tencent", "eastmoney"),
 }
+
+# 「最近仍在失败」的时间窗（秒）：界面顶部告警用它判定是否**当下**有问题。
+# 为什么需要它（2026-09-15 用户反馈"降级提示就没消失过"）：旧逻辑是
+# `degraded 或 今日失败>0` 就弹告警 —— 当天只要有一次网络抖动（或早上一次 10060 超时），
+# 这条提示就挂到次日 0 点，哪怕后面几十次调用全部成功、供货通道早已恢复。
+# 现在按"最近 RECENT_FAIL_WINDOW 秒内是否有失败/切换"判定，恢复后自动消失。
+RECENT_FAIL_WINDOW = 3600
+# 某源"最近一次失败"晚于"最近一次成功"→ 视为该源当下有问题（持久字段，跨重启有效）
+SOURCE_STALE_OK = True
+# 「当下可疑」的失败新鲜度与次数阈值（2026-09-16 二次修复，用户："这个就没成功过"）：
+# 旧实现只判"最后一次是失败"，这个条件对**失败后再没被调用**的源永真 —— 实测
+# eastmoney 当天只被调用 1 次即失败，之后净值走缓存不再调它，告警便整日挂着。
+# 现在要求"失败足够新 + 当日失败次数达到阈值"，并配一条真实探活（见 probe_source）
+# 让安静的源能自己"证明已恢复"，从根上消除"永真"。
+STALE_FAIL_TTL = 1800      # 超过 30 分钟的旧失败不再计入告警（视为已自愈/已不被使用）
+# 判"这个源有问题"需要**连续失败**几次。为什么不用"当日失败总数"：
+# 实测东财在短时间内重复请求会 `Remote end closed connection`（单次抖动/限流），
+# 当日累计 2 次失败就把整条链路标成"降级"太敏感；而"连续失败次数"能区分
+# "抖一下就好了"和"真的挂了"——每次成功都会把计数清零。
+STALE_MIN_FAILS = 3
+# 通道切换（failover）是**瞬时事件**：切换发生后上游通常几十秒就恢复，
+# 顶替通道于是长期驻留。实测 11:35 的切换让告警挂了近 1 小时（用户："这个就没成功过"）。
+# 因此告警只看最近 15 分钟内的切换；更早的切换仍保留在明细列表里供排查。
+FAILOVER_FRESH_WINDOW = 900
 
 PURPOSE_LABEL = {
     "nav": "基金净值",
@@ -144,6 +170,27 @@ def _clip(txt, n=ERROR_MAX):
 _NULLISH = ("", "none", "null", "nil", "n/a", "na")
 
 
+def _now_ts():
+    """当前时间戳（秒）。"""
+    try:
+        return time.time()
+    except Exception:
+        return 0.0
+
+
+def _parse_ts(txt):
+    """'2026-09-15 13:17:51' → 时间戳（秒）；解析不了返回 None。"""
+    s = _safe_str(txt).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return time.mktime(time.strptime(s[:19], fmt))
+        except Exception:
+            continue
+    return None
+
+
 def _clean_name(x, maxlen=24):
     """来源/purpose 名归一：去空白、小写化“None”字样 → 返回字符串或 None。"""
     s = " ".join(_safe_str(x).split())[:maxlen]
@@ -181,10 +228,13 @@ def _blank():
 def _src_rec(raw):
     """把任意脏数据规范成一个源计数桶（缺字段补 0/None，类型不对就丢）。"""
     out = {"calls": 0, "ok": 0, "fail": 0, "limit": None,
-           "last_ok": None, "last_fail": None, "last_error": None}
+           "last_ok": None, "last_fail": None, "last_error": None,
+           # 连续失败次数：每次成功清零。用于区分"抖动"与"真挂了"
+           # （东财短时间内重复请求会 Remote end closed，单次失败不该定性为故障）。
+           "fail_streak": 0}
     if not isinstance(raw, dict):
         return out
-    for k in ("calls", "ok", "fail"):
+    for k in ("calls", "ok", "fail", "fail_streak"):
         try:
             v = int(raw.get(k) or 0)
         except Exception:
@@ -235,9 +285,13 @@ def _normalize(obj):
     raw_act = obj.get("active")
     if isinstance(raw_act, dict):
         for k, v in raw_act.items():
-            name = _safe_str(v)[:24]
-            if name:
-                act[_safe_str(k)[:24]] = name
+            # `_clean_name` 把 "None"/""/"null" 之类的键归一成 None 后丢弃 ——
+            # 历史文件里可能残留 `active: {"None": "zhitu"}`（旧版本写进去的），
+            # 这里在**读取时**一并清掉，界面不会再出现无用途的脏键。
+            pur = _clean_name(k)
+            name = _clean_name(v)
+            if pur and name:
+                act[pur] = name
     out["active"] = act
     out["updated"] = _safe_str(obj.get("updated"), 19) or None
     return out
@@ -245,7 +299,8 @@ def _normalize(obj):
 
 def _empty_source():
     return {"calls": 0, "ok": 0, "fail": 0, "limit": None,
-            "last_ok": None, "last_fail": None, "last_error": None}
+            "last_ok": None, "last_fail": None, "last_error": None,
+            "fail_streak": 0}
 
 
 # ---------------- 持久化存储 ----------------
@@ -348,8 +403,10 @@ class ApiUsage:
                 if ok:
                     rec["ok"] = int(rec.get("ok") or 0) + 1
                     rec["last_ok"] = ts
+                    rec["fail_streak"] = 0        # 成功即清零（见 STALE_MIN_FAILS 注释）
                 else:
                     rec["fail"] = int(rec.get("fail") or 0) + 1
+                    rec["fail_streak"] = int(rec.get("fail_streak") or 0) + 1
                     rec["last_fail"] = ts
                     rec["last_error"] = _clip(error) or "未提供错误信息"
                 # 只有"确实带了用途"的调用才更新 active。
@@ -499,28 +556,168 @@ class ApiUsage:
                            for ds in _recent_dates(today, DAYS_RECENT)]
             out["failover"] = _as_list(data.get("failover"))[-20:][::-1]
             out["active"] = dict(data.get("active") or {})
-            deg, why = self._degraded(out["active"], out["failover"], chain)
+            deg, why = self._degraded(out["active"], out["failover"], chain,
+                                      sources=view)
             out["degraded"] = deg
             out["degraded_reason"] = why
+            # ---- 「当下是否真有问题」：给界面顶部告警用 ----
+            # 全天的 fail 计数只用于展示（数据源面板），不能拿它决定是否弹告警，
+            # 否则一次瞬时抖动会把提示挂一整天（见 RECENT_FAIL_WINDOW 注释）。
+            now = _parse_ts(_safe_str(data.get("updated"))) or _now_ts()
+            recent_cut = now - RECENT_FAIL_WINDOW
+            recent_fails = 0
+            stale_sources = []
+            stale_detail = {}
+            for name, rec in (view or {}).items():
+                lf = _parse_ts(rec.get("last_fail"))
+                lo = _parse_ts(rec.get("last_ok"))
+                if lf is not None and lf >= recent_cut:
+                    recent_fails += 1
+                # 「当下可疑」的三个**同时**成立条件（2026-09-16 修）：
+                #   ① 最后一次事件是失败（lf > lo）
+                #   ② 该失败在 STALE_FAIL_TTL 之内（否则早已自愈/该源只是暂时不被调用）
+                #   ③ 当日累计失败 ≥ STALE_MIN_FAILS（单次抖动不足以挂告警）
+                # 旧实现只判 ①，而 ① 对"失败后再也没被调用"的源**永真**：
+                # 实测 eastmoney 当天只被调用 1 次（11:35 失败），之后净值走缓存不再调它，
+                # 于是"降级提示"整日不消失——正是用户反馈的"这个就没成功过"。
+                if lf is not None and (lo is None or lf > lo):
+                    within = lf >= (now - STALE_FAIL_TTL)
+                    streak = int(rec.get("fail_streak") or 0)
+                    # 兼容旧数据（没有 fail_streak 字段）：回落到当日失败数判断
+                    if not streak:
+                        streak = int(rec.get("fail") or 0)
+                    if within and streak >= STALE_MIN_FAILS:
+                        stale_sources.append(name)
+                        stale_detail[name] = {
+                            "last_fail": rec.get("last_fail"),
+                            "fail_streak": streak,
+                            "fails_today": int(rec.get("fail") or 0),
+                            "age_seconds": int(now - lf),
+                            "error": (rec.get("last_error") or "")[:80]}
+                    else:
+                        # 只是"失败后再没被调用"或"连续失败不足以定性"→ 不告警，
+                        # 但在明细里说明原因，避免用户看到有失败记录却不知为何没告警。
+                        stale_detail.setdefault("_cleared", {})[name] = (
+                            "失败已超时自愈（{} 秒前）".format(int(now - lf))
+                            if not within
+                            else "连续失败 {} 次，未达阈值 {}（多为限流/抖动）".format(
+                                streak, STALE_MIN_FAILS))
+            recent_failover = [f for f in _as_list(out.get("failover"))
+                               if (_parse_ts((f or {}).get("ts")) or 0) >= recent_cut]
+            # 告警只看**新鲜**切换（15 分钟），避免一次切换挂一小时
+            fresh_failover = [f for f in _as_list(out.get("failover"))
+                              if (_parse_ts((f or {}).get("ts")) or 0)
+                              >= (now - FAILOVER_FRESH_WINDOW)]
+            out["recent_fails"] = recent_fails
+            out["recent_failover"] = len(recent_failover)
+            out["recent_sources"] = stale_sources
+            out["stale_sources"] = stale_sources
+            out["stale_detail"] = stale_detail
+            out["window_seconds"] = RECENT_FAIL_WINDOW
+            out["stale_ttl_seconds"] = STALE_FAIL_TTL
+            out["stale_min_fails"] = STALE_MIN_FAILS
+            out["failover_fresh_seconds"] = FAILOVER_FRESH_WINDOW
+            out["fresh_failover"] = len(fresh_failover)
+            # 告警只在**确有当下问题**时亮，两个来源（互补、都要求"当前仍未恢复"）：
+            #   · degraded      —— 首选源确实失败过，当前由备用源供货；
+            #   · stale_sources —— 有源**连续失败 ≥STALE_MIN_FAILS 次**且最近一次失败在
+            #                      STALE_FAIL_TTL 之内（够了才定性为"这个源有问题"）。
+            # 明确**不**把这两项计入告警：
+            #   · recent_fails  —— 窗口内失败次数：一次瞬时抖动不该弹提示（19.2 定的原则）；
+            #   · fresh_failover —— 刚发生的通道切换：既然已用连续失败阈值定性"是不是真坏"，
+            #     就不该让"任何一次失败"（它必然产生一条切换记录）绕过阈值直接弹告警。
+            #     切换明细仍在 failover 列表里可见，供排查。
+            trouble = []
+            # 降级告警要求"降级是**最近**发生的"：
+            # 早上 11:35 跌到备用源、之后一直稳定，就没必要把提示挂到收盘
+            # ——这正是用户反复反馈的"这个就没成功过"。降级事实仍留在
+            # `degraded`/`degraded_reason` 里（面板可见、可排查），只是不再触发顶部告警。
+            deg_age = None
+            if deg:
+                fo_ts = [_parse_ts((f or {}).get("ts")) or 0
+                         for f in _as_list(out.get("failover"))]
+                fo_ts = [t for t in fo_ts if t]
+                if fo_ts:
+                    deg_age = int(now - max(fo_ts))
+            out["degraded_age_seconds"] = deg_age
+            if deg and (deg_age is None or deg_age <= RECENT_FAIL_WINDOW):
+                trouble.append("degraded")
+            if stale_sources:
+                trouble.append("stale:" + ",".join(stale_sources))
+            out["trouble_reason"] = "；".join(trouble) or None
+            out["has_recent_trouble"] = bool(trouble)
         except Exception as e:
             out["error"] = _clip(e)
         return out
 
-    def _degraded(self, active, failover=None, chain=None):
-        """是否处于降级状态 + 原因（基于「当前供货源 ≠ 首选源」）。"""
+    def _degraded(self, active, failover=None, chain=None, sources=None):
+        """是否处于降级状态 + 原因。
+
+        判定原则（2026-09-16 补第二部分）：降级 = **首选源确实在今天失败过**，
+        现在退到了备用源。若某个用途从没调用过首选源（当天 0 次），
+        那不是"降级"，只是"走了另一条链"——旧实现会把它写成
+        「已降级：当前由 eastmoney 供货，非首选 akshare」，而 akshare 当天调用数 = 0，
+        属于**空判**，正是用户看到的"这个就没成功过"的第二个来源。
+        """
         cfg_chain = dict(CHAIN_DEFAULT)
         if isinstance(chain, dict):
             for k, v in chain.items():
                 if v:
                     cfg_chain[k] = tuple(v)
+        srcs = sources or {}
+        # 故障切换记录是"首选源确实失败过"的**直接证据**，而且比计数更可靠：
+        # 有些源失败了却不会留下成功/失败计数（例如 akshare 根本不在当前有效链里，
+        # 只在"深链"里被尝试过一次），此时 `srcs['akshare'].fail` 会是 0。
+        by_purpose = {}
+        for f in _as_list(failover):
+            if not isinstance(f, dict):
+                continue
+            pur = f.get("purpose")
+            if not pur:
+                continue
+            by_purpose.setdefault(pur, []).append(f)
         reasons = []
         for pur, src in sorted((active or {}).items()):
+            # 探查性用途不参与降级判定：`probe_source()` 会把探活结果记进 active，
+            # 而 "probe" 只是**健康检查**、不是任何数据链路的供货源。若不排除，
+            # 每次探活都会造出一条"probe 使用非常规通道X"的假降级（实测踩到）。
+            if pur == PROBE_PURPOSE:
+                continue
             seq = tuple(cfg_chain.get(pur) or ())
-            if not seq or src == seq[0]:
-                continue                     # 未知用途 或 正是首选源
+            if seq and src == seq[0]:
+                continue                     # 正是首选源供货 → 没有降级
+            pref = seq[0] if seq else None
+            prec = srcs.get(pref) or {}
+            pref_failed = int(prec.get("fail") or 0)
+            pref_calls = int(prec.get("calls") or 0)
+            fos = by_purpose.get(pur) or []
+            # "首选源失败过"的两种证据：计数，或故障切换记录（见上方注释）
+            ev = next((f for f in fos if f.get("from") == pref), None)
+            pref_evidence = pref_failed > 0 or ev is not None
+            # **降级 = 首选源今天确实失败过，因此改用了别的通道**（一次也算，它是"事实描述"）。
+            # 注意区分两层语义（2026-09-16 收口）：
+            #   · degraded        —— 状态判定：说明"为什么现在是备用源在供货"，供排查；
+            #   · has_recent_trouble —— 界面告警：另有"连续失败 ≥N 次且失败够新"等更严的闸门，
+            #     所以一次抖动会如实记成"已降级"，但**不会**弹告警。
+            if not pref_evidence:
+                if pref is None:
+                    reasons.append("{} 使用非常规通道 {}".format(
+                        PURPOSE_LABEL.get(pur, pur), src))
+                elif pref_calls == 0:
+                    reasons.append(
+                        "{} 走的是备用通道 {}（首选 {} 当天未被调用、也无失败记录，"
+                        "非故障降级）".format(PURPOSE_LABEL.get(pur, pur), src, pref))
+                else:
+                    reasons.append(
+                        "{} 当前由 {} 供货（首选 {} 当天 {}/{} 次成功，未判定为故障）"
+                        .format(PURPOSE_LABEL.get(pur, pur), src, pref,
+                                int(prec.get("ok") or 0), pref_calls))
+                continue
             if src in seq:
                 idx = seq.index(src)
                 last = _last_failover(failover, pur, src) or {}
+                if not last and ev:
+                    last = ev
                 reason = last.get("reason") or "上游不可用"
                 frm = last.get("from")
                 if frm and idx > 0 and frm == seq[idx - 1]:
@@ -528,43 +725,89 @@ class ApiUsage:
                     reasons.append("{} 已降级：{} → {}（{}）".format(
                         PURPOSE_LABEL.get(pur, pur), frm, src, reason))
                 elif frm and frm != src:
-                    # 例如 quote：先探过新浪才落到腾讯，链上“前一家”其实是东财。
-                    # 如实描述“谁在供货 + 哪家失败过”，不编造链路。
                     reasons.append(
                         "{} 已降级：当前由 {} 供货，非首选 {}（{} 失败：{}）"
                         .format(PURPOSE_LABEL.get(pur, pur), src, seq[0],
                                 frm, reason))
                 else:
-                    reasons.append("{} 已降级：当前由 {} 供货，非首选 {}".format(
-                        PURPOSE_LABEL.get(pur, pur), src, seq[0]))
+                    reasons.append("{} 已降级：当前由 {} 供货，非首选 {}"
+                                   "（首选当天失败 {} 次）".format(
+                                       PURPOSE_LABEL.get(pur, pur), src, pref,
+                                       pref_failed or 1))
             else:
                 reasons.append("{} 使用非常规通道 {}".format(
                     PURPOSE_LABEL.get(pur, pur), src))
-        return (bool(reasons), "；".join(reasons) if reasons else None)
+        # 只有"首选源确实失败过"才算真降级；纯走备用链的只做说明，不亮告警
+        hard = [r for r in reasons if "非故障降级" not in r and "未判定为故障" not in r]
+        return (bool(hard), "；".join(reasons) if reasons else None)
 
-    def usage_summary(self, provider=None, daily_limit=None, cfg=None):
+    def usage_summary(self, provider=None, daily_limit=None, cfg=None, chain=None):
         """兼容旧 ``Market.usage()`` 的键：provider/calls_today/daily_limit/
-        zhitu_today/akshare_today（前端 app.js 已在用，不能删）。"""
-        snap = self.snapshot(cfg=cfg, provider=provider)
+        zhitu_today/akshare_today（前端 app.js 已在用，不能删）。
+
+        ``chain`` 必须由调用方按**实际实现**传入（见 ``Market._usage_chain``）：
+        否则降级判定会用 CHAIN_DEFAULT，与实际通道顺序不一致时会误报降级。
+        """
+        snap = self.snapshot(cfg=cfg, provider=provider, chain=chain)
         today = snap.get("today") or {}
         srcs = today.get("sources") or {}
         calls = int(today.get("calls") or 0)
         lim = _positive_int(daily_limit if daily_limit is not None
                             else today.get("limit"))
-        rem = None if not lim else max(0, int(lim) - calls)
+        # ---- 配额口径（2026-09-15 修正）----
+        # **只有智兔有每日上限**（data.zhitu_daily_limit，默认 200）；
+        # 东财/新浪/腾讯/akshare 都是免费公开通道，**只要不出故障就是不限量的**。
+        # 旧实现把"全通道调用合计"拿去减智兔上限，于是别的通道的调用会吃掉
+        # 智兔的"剩余额度"，界面看起来像"每天只有 200 次可用"——这是错的。
+        # 现在：remaining/zhitu_remaining 只按智兔算；其余通道单独给出"不限量"计数。
+        zhitu_calls = int((srcs.get("zhitu") or {}).get("calls") or 0)
+        # 智兔上限：优先取当天记录的 limit，其次取调用方传入的 daily_limit
+        zt_rec_limit = (srcs.get("zhitu") or {}).get("limit")
+        zt_limit = _positive_int(zt_rec_limit if zt_rec_limit is not None else lim)
+        zt_rem = None if not zt_limit else max(0, int(zt_limit) - zhitu_calls)
+        other_calls = max(0, calls - zhitu_calls)
+        # 分源配额表：以"今天出现过的源"为准（固定源 + 未知源都列出）
+        quota = []
+        for name in (list(SOURCES) + [k for k in srcs if k not in SOURCES]):
+            r = srcs.get(name) or {}
+            c = int(r.get("calls") or 0)
+            src_limit = _positive_int(r.get("limit"))
+            if name == "zhitu" and not src_limit:
+                src_limit = zt_limit
+            quota.append({
+                "source": name,
+                "calls": c,
+                "limit": src_limit,                       # None = 不限量
+                "remaining": (None if not src_limit
+                              else max(0, int(src_limit) - c)),
+                "exhausted": bool(src_limit and c >= int(src_limit)),
+                "unlimited": not src_limit,
+            })
+        unlimited = [x["source"] for x in quota if x["unlimited"]]
         return {
             # ---- 旧字段（必须保持） ----
             "provider": provider,
             "calls_today": calls,
-            "daily_limit": lim,
-            "zhitu_today": int((srcs.get("zhitu") or {}).get("calls") or 0),
+            "daily_limit": zt_limit,
+            # 旧键含义澄清：**这是智兔的今日调用数**（不是全通道）
+            "zhitu_today": zhitu_calls,
             "akshare_today": int((srcs.get("akshare") or {}).get("calls") or 0),
+            # ---- 新增：分源配额与"不限量"标记 ----
+            "quota": quota,
+            "zhitu_limit": zt_limit,
+            "zhitu_remaining": zt_rem,
+            "zhitu_exhausted": bool(zt_limit and zhitu_calls >= int(zt_limit)),
+            "other_calls_today": other_calls,
+            "unlimited_sources": unlimited,
+            "unlimited_calls_today": other_calls,
             # ---- 新增：分源明细 / 昨日 / 剩余 / 降级视图 ----
             "date": snap.get("date"),
             "ok_today": int(today.get("ok") or 0),
             "fail_today": int(today.get("fail") or 0),
-            "remaining": rem,
-            "exhausted": bool(today.get("exhausted")),
+            # remaining/exhausted 一律指**智兔**（唯一有配额的通道），
+            # 不再用"全通道合计"去比智兔上限
+            "remaining": zt_rem,
+            "exhausted": bool(zt_limit and zhitu_calls >= int(zt_limit)),
             "sources": srcs,
             "by_source": {k: int((v or {}).get("calls") or 0)
                           for k, v in srcs.items()},
@@ -575,10 +818,75 @@ class ApiUsage:
             "active": snap.get("active"),
             "degraded": bool(snap.get("degraded")),
             "degraded_reason": snap.get("degraded_reason"),
+            # 「当下是否真有问题」——界面顶部告警只认这几个（全天的 fail 计数只用于展示）
+            "has_recent_trouble": bool(snap.get("has_recent_trouble")),
+            "trouble_reason": snap.get("trouble_reason"),
+            "fresh_failover": snap.get("fresh_failover"),
+            "stale_detail": snap.get("stale_detail"),
+            # 判定口径也要透出：界面要能告诉用户"为什么这次没报警"，
+            # 否则用户只会看到"有失败记录却没提示"，反而更困惑。
+            "stale_min_fails": snap.get("stale_min_fails"),
+            "stale_ttl_seconds": snap.get("stale_ttl_seconds"),
+            "failover_fresh_seconds": snap.get("failover_fresh_seconds"),
+            "degraded_age_seconds": snap.get("degraded_age_seconds"),
+            "recent_fails": snap.get("recent_fails"),
+            "recent_failover": snap.get("recent_failover"),
+            "recent_sources": snap.get("recent_sources"),
+            "stale_sources": snap.get("stale_sources"),
+            "window_seconds": snap.get("window_seconds"),
             "store": snap.get("store"),
             "updated": snap.get("updated"),
             "snapshot": snap,
         }
+
+
+# ---------------- 真实探活：让"安静的源"能证明自己已恢复 ----------------
+# 为什么必须有它（2026-09-16 用户："这个就没成功过"）：告警要能自己灭掉，
+# 前提是**有东西能证明该源已恢复**。但项目里很多源是"用到才调"
+# （净值走缓存、非交易时段不刷行情），失败后就再没机会写成功记录，
+# 状态永远停在"最后一次是失败"。探活给了它一次主动证明的机会。
+PROBE_URLS = {
+    "sina": "https://hq.sinajs.cn/list=s_sh000300",
+    "tencent": "https://qt.gtimg.cn/q=s_sh000300",
+    "eastmoney": ("https://push2.eastmoney.com/api/qt/stock/get"
+                  "?secid=1.000300&fields=f43,f170"),
+}
+PROBE_PURPOSE = "probe"
+
+
+def probe_source(name, purpose=PROBE_PURPOSE, cfg=None, timeout=6):
+    """真实探活一个数据源，并把结果**计入用量账（失败也记）**。
+
+    返回 {"ok": bool, "source": name, "detail": str}；异常一律吞掉并记为失败，
+    绝不让探活本身打断主流程。
+    """
+    import urllib.request
+    url = PROBE_URLS.get(name)
+    if not url:
+        return {"ok": False, "source": name, "detail": "无探活地址，跳过"}
+    ok, err = False, ""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://finance.sina.com.cn/"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read(2048)
+            ok = bool(body) and int(getattr(r, "status", 200)) == 200
+            if not ok:
+                err = "HTTP {}".format(getattr(r, "status", "?"))
+    except Exception as e:
+        err = str(e)[:120]
+    try:
+        note(name, ok=ok, error=err or None, purpose=purpose, cfg=cfg)
+    except Exception:
+        pass
+    return {"ok": ok, "source": name, "detail": "ok" if ok else (err or "无响应")}
+
+
+def probe_sources(names=None, purpose=PROBE_PURPOSE, cfg=None):
+    """批量探活（界面按钮 / 定时任务用）。返回 {name: result}。"""
+    names = list(names or ("sina", "tencent", "eastmoney"))
+    return {n: probe_source(n, purpose=purpose, cfg=cfg) for n in names}
 
 
 # ---------------- 便捷小工具 ----------------
@@ -689,12 +997,20 @@ def snapshot(cfg=None, provider=None, chain=None):
     return _STORE.snapshot(cfg=cfg, provider=provider, chain=chain)
 
 
-def usage_summary(cfg=None, provider=None, daily_limit=None):
-    """模块级快捷方式，见 :meth:`ApiUsage.usage_summary`。"""
+def usage_summary(cfg=None, provider=None, daily_limit=None, chain=None):
+    """模块级快捷方式，见 :meth:`ApiUsage.usage_summary`。
+
+    **注意 chain 必须透传**（2026-09-15 修复"降级提示永不消失"的第二个坑）：
+    `Market.usage()` 调的是这个**模块级函数**（与同名方法重名，模块级定义在后、
+    把类属性盖住了），而它原先**没接 chain**、也没往下传 → 降级判定只能回落到
+    `CHAIN_DEFAULT`。加上 `CHAIN_DEFAULT.quote` 又把东财当首选（实现是新浪优先），
+    于是"新浪正常供货"被永久判成已降级：界面那条提示怎么都不会消失。
+    现在 chain 一路透传到 `snapshot`，判定表与实现一致；缺省时仍回落 CHAIN_DEFAULT。
+    """
     if provider is None:
         provider = _provider_of(cfg)
     return _STORE.usage_summary(provider=provider, daily_limit=daily_limit,
-                                cfg=cfg)
+                                cfg=cfg, chain=chain)
 
 
 def reset(path=None):

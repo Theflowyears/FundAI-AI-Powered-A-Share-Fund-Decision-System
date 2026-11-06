@@ -61,6 +61,67 @@
   - 财联社电报接口需动态签名、历史无法自动回溯：在浏览器手动导出的电报
     json/jsonl 可用 `python app.py cls-import --file x.json --date YYYY-MM-DD` 并入样本。
 
+## 版本更新 v1.2.0 / What's new（2026-11-06）
+
+本版把**资金分配**从启发式升级为可解释的约束组合构建，并用真实基金级引擎
+（十年、四窗口、年度分解、时间顺序留出段）重跑了默认参数。**结论不是全面变好**，
+下面把代价一起写清。
+
+### 决策与组合层
+
+- 新增 `fundai/portfolio.py`：`equal` 等权 / `inv_vol` 逆波动 /
+  `min_var` 收缩协方差最小方差 / `adaptive` 制度自适应；
+  统一套单基金上限 45%、同主题上限 70%、起购额、整数元，数据不足回退等权，
+  并输出权重、金额、事前年化波动与集中度（HHI）到每日决策文案。
+- **默认 `adaptive`**：趋势上行（沪深300 20 日动量 > 0 且评分 ≥ 25）用旧动量加权
+  集中强势主题；其余状态等权分散。`adaptive_signal` 可切 `ma_align`/`mom20`/`either`。
+- **基金级止损/止盈改为两个开关并默认关闭**（`fund_stop_loss_enable`、
+  `fund_take_profit_enable`）；指数级均线减仓、峰值回撤冷却、组合止损、硬上限全部保留。
+- 默认仓位从 **基准 90% / 硬上限 95% 调整为 80% / 80%**。
+- 选基因子权重**没有改**（纯 20 日动量档实测全历史 +151.5% 但回撤 25.1% 越界、
+  牛市段只有 +6.1%，不足以支持改动）。
+
+### 实测（真实基金级引擎，2017-09-28 → 2026-11-05，同一份数据同一口径）
+
+| 指标 | 旧策略 | v1.2.0 默认 |
+|---|---:|---:|
+| 全历史收益 / 最大回撤 | +75.7% / 24.1% | **+187.0% / 21.4%** |
+| 时间切分留出段（2023-09→2026-11） | +46.7% | **+82.0%** |
+| 牛市窗口（2020-03→2021-01） | **+25.5%** | +16.4% |
+| 近 12 个月（2025-09→2026-11） | **+6.9%** | −1.9% |
+
+**代价必须一起读**：新默认在**牛市反弹初期**和**近 12 个月这段行情**都跑输旧策略。
+`mom20` 确认趋势需要约 20 个交易日，急跌后的 V 型反弹里它会先用等权，稀释最强主题；
+如果未来重演近端这种行情，请不要期待 v1.2.0 更好。想回到旧行为，
+参数面板把 `portfolio_method` 设回 `legacy`、两个基金级开关打开即可（配置有备份与回滚）。
+完整表格、年度分解与复现命令见技术文档 **§25**（`README_TECH.md`）。
+
+### 两处口径修复（会改变历史回测数字）
+
+- `Engine.simulate` 现在与 `run_daily` 一样注入 `ma_align`/`vol_rank`：
+  此前**回放看不到制度状态**，自适应与调整带在回测里会静默退化成等权。
+- `data/harness.py` 的缓存签名原本盯 `kline_000300.SH.json`，实际落盘名是
+  `kline_000300_SH.json`，签名恒为无效 → 研究窗口长期停在旧日期、与实盘回测口径不一致。
+  修复后本报告全部数字重算（旧文档里 “90% 档回撤 30.4%” 之类数字即来自这个失效缓存）。
+
+### 数据与安全
+
+- 不再跟踪个人运行时数据：`data/fund200.db`（及其 .bak）、`data/screening.db`、
+  `data/pool_state.json`、`data/signals_update.log` 已移出仓库并写进 `.gitignore`；
+  `data/config_backups/`、`data/live.db`、`data/cls_history.db` 同样永不提交。
+- 仓库内 `config.json` / `config.example.json` 的 `zhitu_token`、`llm.api_key` 一律为空。
+- ⚠️ 历史提交中曾包含一个智兔 token，请视为已泄露并轮换。
+- 测试确定性修复：`test_api_usage` 里一条用例原先依赖本机净值缓存深度
+  （新克隆会失败），现钉住预期通道链。当前 **338 项测试全绿**，
+  发行包另经 `tools/verify_release.py` 12 项检查（含从 ZIP/wheel 内起服务与跑测试）。
+
+### 研究复现
+
+```bash
+python data/decision_study.py --jobs 1        # 15 变体 × 5 窗口 + 年度分解
+python data/decision_study.py --jobs 1 --windows full,recent --only live,legacy_live
+```
+
 ## 版本更新 v1.1.0 / What's new（2026-09-27）
 
 本版把此前分开开发的两条线合并为一：一条以事件语义、命中率校准与每日结算为主，另一条模块与工具更完整。
@@ -113,7 +174,7 @@ python -m pytest
 ## 一、快速开始
 
 ```bat
-cd F:\DSHtemporary\fund200ai
+cd <project-dir>\fund200ai
 %LOCALAPPDATA%\Python\bin\python.exe app.py init     :: 初始化（1000 起步 / 目标 1500 / 半年）
 %LOCALAPPDATA%\Python\bin\python.exe app.py serve    :: 启动界面  http://127.0.0.1:8787
 ```

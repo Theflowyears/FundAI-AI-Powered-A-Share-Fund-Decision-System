@@ -33,6 +33,30 @@ function toast(msg, type = "info") {
   setTimeout(() => el.remove(), type === "err" ? 6000 : 3500);
 }
 
+
+/* 配额文案：只有智兔有上限，其余通道不限量（2026-09-15 口径修正） */
+function quotaBrief(ap) {
+  if (!ap) return "";
+  const zt = ap.zhitu_today ?? 0;
+  const lim = ap.zhitu_limit ?? ap.daily_limit;
+  const other = ap.other_calls_today ?? Math.max(0, (ap.calls_today || 0) - zt);
+  let s = " · 智兔 " + zt + (lim != null ? "/" + lim + " 次" : "（未配 Token）");
+  if (lim != null) s += "（剩余 " + (ap.zhitu_remaining ?? (lim - zt)) + "）";
+  if (other > 0) s += " · 其它通道 " + other + " 次（不限）";
+  return s;
+}
+function quotaLong(ap) {
+  if (!ap) return "—";
+  const parts = [];
+  for (const q of (ap.quota || [])) {
+    if (!q.calls && !q.limit) continue;
+    parts.push(`${SRC_LABEL[q.source] || q.source} ${q.calls} 次`
+      + (q.unlimited ? "（不限）" : `/${q.limit}（剩 ${q.remaining}）`));
+  }
+  if (!parts.length) parts.push(`今日 ${ap.calls_today || 0} 次`);
+  return parts.join(" · ");
+}
+
 /* ---------- 全局状态 ---------- */
 let ST = null;         // /api/state
 let HIST = [];         // snapshots
@@ -56,7 +80,7 @@ async function loadAll(quiet) {
     ST = s.state; HIST = h.snapshots || []; RECS = r.records || [];
     ORDERS = o.orders || []; FUNDS = f.funds || [];
     renderHeader(); renderDash(); renderRecords(); renderOrders(); renderFunds();
-    renderSettings(); tryRenderBt();
+    renderSettings(); renderSrcAlert(); renderBudget(); tryRenderBt();
     // echarts 就绪后与布局稳定后各重绘一次（容器可见才真正绘制）
     whenEcharts(redrawAll);
     setTimeout(() => { if (seq === loadSeq) whenEcharts(redrawAll); }, 600);
@@ -64,6 +88,8 @@ async function loadAll(quiet) {
     if (!quiet) toast("加载失败：" + e.message, "err");
   }
   loadIndices();
+  loadMarket();
+  loadMidday(true);
   api("/api/news/dirstats").then(j => {
     if (seq !== loadSeq) return;
     DIRS = j.stats || null;
@@ -82,13 +108,193 @@ function renderHeader() {
     : (ST.exec_mode === "manual" ? "人工执行模式：AI 建议 → 你亲自执行 → 录入成交"
         : "模拟自动成交（仅演示流程）");
   $("badgeExec").textContent = "模式：" + execTxt;
+  // 配额口径：**只有智兔有 200/日上限，其它通道不限**（别再显示"总调用/200"）
   $("badgeSrc").textContent = "数据源：" + ST.data_source +
-    (ST.api_usage ? " · 今日已用 " + ST.api_usage.calls_today + " 次" +
-      (ST.api_usage.daily_limit != null ? "/" + ST.api_usage.daily_limit + " 次" : "（智兔不限/akshare免费）") : "");
+    (ST.api_usage ? quotaBrief(ST.api_usage) : "");
   $("btnRun").style.display = ST.demo ? "none" : "";
 }
 
-/* ---------- 大盘指数条 ---------- */
+/* ---------- 午间复盘（午间诊断）：主界面显眼卡片 ---------- */
+let INTRA_MID = null;   // /api/intraday 载荷
+
+async function loadMidday(quiet) {
+  try {
+    const j = await api("/api/intraday");
+    INTRA_MID = j.intraday || null;
+  } catch (e) { if (!quiet) toast("读取午间诊断失败：" + e.message, "err"); }
+  renderMidday();
+}
+
+function renderMidday() {
+  const box = $("middayCard");
+  if (!box) return;
+  const m = INTRA_MID || {};
+  const today = m.today || {};
+  const st = m.stats || {};
+  const phase = (typeof MKT !== "undefined" && MKT && MKT.phase) || m.phase || "";
+  const live = ["am", "noon"].includes(phase);
+  const badge = $("middayBadge"), view = $("middayView"), meta = $("middayMeta");
+  const myView = m.view_text || today.dir_view || "";
+
+  if (!today.summary) {
+    // 没有当日诊断：把"为什么没有 / 怎么补救"说清楚，而不是只显示一句提示。
+    // 2026-09-16 事故：11:35 那次三家行情通道同时瞬断 → 整天没有诊断，
+    // 界面当时只说"今日还没有午间复盘"，看不出是"没跑"还是"跑了失败"。
+    if (badge) {
+      badge.textContent = m.last_error ? "执行失败" : "今日未运行";
+      badge.className = "badge warn";
+    }
+    if (view) view.textContent = m.last_error ? "取数失败，未生成复盘" : "尚未生成（可点右侧立即诊断）";
+    if (meta) {
+      meta.innerHTML = [
+        m.last_error ? `<span class="warn-txt">最近一次失败：${esc(m.last_error)}</span>` : "",
+        "自动班次：工作日 11:35（失败则 11:40 / 11:45 补跑）· 15:05 自动结算命中",
+        "机制：只描述上午发生了什么 + 下午要盯什么，不做次日预测；界面轮询不触发在线请求",
+      ].filter(Boolean).join(" · ");
+    }
+    box.innerHTML = `<div class="mut small" style="line-height:1.9">
+      ${m.last_error
+        ? `本次<b>没有取到实时行情</b>，所以没有强行编一个观点。可点【⚡ 立即诊断】重试；
+           若仍是失败，检查网络，或看 <code>data/intraday.log</code>。`
+        : `现在是${SESSION_TXT[phase] || "非交易时段"}。${live
+            ? "点【⚡ 立即诊断】即可生成午间复盘。"
+            : "诊断随时可跑；行情取当日最新一次（收盘后即为当天收盘数据）。"}`}
+      ${st.total ? `<br>历史自检：命中 ${st.hit}/${st.total}（${fmtPct0(st.hit_rate)}）` : ""}
+    </div>`;
+    return;
+  }
+  const hit = today.hit == null
+    ? '<span class="gold-txt">待收盘结算</span>'
+    : (today.hit ? '<span class="up">命中 ✓</span>' : '<span class="down">未中 ✗</span>');
+  if (badge) {
+    badge.textContent = `${today.time || ""} 诊断`;
+    badge.className = "badge " + (today.hit == null ? "warn" : "live");
+  }
+  if (view) view.textContent = myView || "—";
+  if (meta) {
+    meta.innerHTML = [
+      today.mid_chg == null ? "" : `上午 <b>${fmtPct(today.mid_chg)}</b>`,
+      `结算：${hit}`,
+      today.pm_chg == null ? "" : `下午 ${fmtPct(today.pm_chg)}`,
+      `历史自检：命中 <b>${st.hit || 0}/${st.total || 0}</b>（${st.hit_rate == null ? "—" : fmtPct0(st.hit_rate)}）`,
+    ].filter(Boolean).join(" · ");
+  }
+  box.innerHTML = `<div class="mut" style="line-height:1.9">${esc(today.summary || "")}</div>`;
+}
+
+/* ---------- 大盘概览 + 今日分时（主界面） ---------- */
+let MKT = null;          // /api/market/overview 载荷
+let INTRA = null;        // /api/market/intraday 载荷
+const SESSION_TXT = {
+  pre_open: "盘前", auction: "集合竞价", am: "上午盘", noon: "午间休市",
+  pm: "下午盘", closed: "已收盘", weekend: "周末休市",
+};
+const SESSION_LIVE = { auction: 1, am: 1, pm: 1 };
+
+let _mktRetry = null;   // warming 重试定时器（防抖：同一时刻只留一个）
+async function loadMarket() {
+  // 大盘概览：首次返回 warming=true（服务端正在后台统计全市场）→ 2 秒后重试一次
+  try {
+    const j = await api("/api/market/overview");
+    MKT = j.overview || null;
+    renderMktPanel();
+    if (MKT && MKT.warming && !_mktRetry) {
+      _mktRetry = setTimeout(() => { _mktRetry = null; loadMarket(); }, 2000);
+    }
+  } catch (e) { MKT = null; renderMktPanel(); }
+  loadIntraday();
+}
+
+async function loadIntraday() {
+  try {
+    const j = await api("/api/market/intraday");
+    INTRA = j.intraday || null;
+  } catch (e) { INTRA = null; }
+  renderIntraday();
+}
+
+function renderMktPanel() {
+  const g = $("mktGrid");
+  if (!g) return;
+  const o = MKT || {};
+  const of = $("mktAsOf");
+  if (of) {
+    of.textContent = o.ok
+      ? `统计 ${o.samples ?? 0} 只 · ${esc(String(o.asof || "").slice(11, 19))} 更新`
+        + (o.full === false ? "（样本统计中，稍后补全）" : "")
+      : (o.warming ? "首次统计中…" : (o.message || "暂不可用"));
+  }
+  if (!o.ok && !o.warming) {
+    g.innerHTML = `<div class="mut small">大盘概览暂不可用：${esc(o.message || "数据源未响应")}（不影响研判与持仓）</div>`;
+    return;
+  }
+  const rise = o.rise, fall = o.fall, flat = o.flat;
+  const tot = (rise || 0) + (fall || 0) + (flat || 0);
+  const bpct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+  const num = (v) => (v == null ? "—" : Number(v).toLocaleString("zh-CN"));
+  const tone = (v, good) => (v == null ? "" : (good ? "up" : "down"));
+  const cls = o.phase && SESSION_LIVE[o.phase] ? "live" : "warn";
+  const amt = o.amount_yi == null ? "—" : (o.amount_yi >= 10000
+    ? (o.amount_yi / 10000).toFixed(2) + " 万亿" : o.amount_yi.toFixed(0) + " 亿");
+  const cards = [
+    ["交易时段", SESSION_TXT[o.phase] || o.phase || "—", cls,
+      SESSION_LIVE[o.phase] ? "盘中 · 数据每 1 分钟刷新" : "非交易时段 · 显示最近一次数据"],
+    ["上涨家数", num(rise), tone(rise, true), `占比 ${bpct(o.breadth)}（涨/总）`],
+    ["下跌家数", num(fall), tone(fall, false), `平盘 ${num(flat)} 家`],
+    ["涨停 / 跌停", `${num(o.zt)} / ${num(o.dt)}`, (o.zt || 0) >= (o.dt || 0) ? "up" : "down",
+      `涨停占比 ${bpct(o.limit_up_ratio)}`],
+    ["两市成交额", amt, "", tot ? `覆盖 ${num(o.samples || tot)} 只` : "—"],
+  ];
+  g.innerHTML = cards.map(([k, v, c, sub]) =>
+    `<div class="mkt-card"><div class="k">${esc(k)}</div>
+      <div class="v ${c || ""}">${v}</div>
+      <div class="sub mut small">${esc(sub)}</div></div>`).join("");
+}
+
+function renderIntraday() {
+  const note = $("mktIntraNote");
+  const it = INTRA || {};
+  if (note) {
+    note.textContent = it.ok
+      ? `· ${esc(it.name || "")} 最新 ${it.price ?? "—"}（${fmtPct(it.chg_pct)}）`
+        + ` · 昨收 ${it.pre_close ?? "—"} · 日内高/低 ${it.high ?? "—"}/${it.low ?? "—"}`
+        + ` · 来源 ${esc(it.source || "")}`
+      : `· ${esc(it.message || "分时暂不可用")}`;
+  }
+  const el = $("chIntraday");
+  if (!el || !echartsOK() || !elVisible(el)) return;
+  if (!it.ok || !(it.points || []).length) {
+    const c = chartInit("chIntraday");
+    if (c) c.clear();
+    return;
+  }
+  const c = chartInit("chIntraday");
+  if (!c) return;
+  const pre = it.pre_close;
+  const xs = it.points.map(p => p.t);
+  const ys = it.points.map(p => p.price);
+  const up = (it.chg_pct || 0) >= 0;
+  c.setOption({
+    animation: false,
+    grid: { left: 52, right: 12, top: 16, bottom: 22 },
+    tooltip: { trigger: "axis", valueFormatter: v => Number(v).toFixed(2) },
+    xAxis: { type: "category", data: xs, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(xs.length / 8)) } },
+    yAxis: { type: "value", scale: true, axisLabel: { fontSize: 10 },
+      splitLine: { lineStyle: { opacity: .25 } } },
+    series: [{
+      type: "line", data: ys, showSymbol: false, smooth: false,
+      lineStyle: { width: 1.6, color: up ? "#e5484d" : "#30a46c" },
+      areaStyle: { opacity: .12, color: up ? "#e5484d" : "#30a46c" },
+      markLine: pre == null ? undefined : {
+        silent: true, symbol: "none",
+        lineStyle: { type: "dashed", opacity: .6 },
+        data: [{ yAxis: pre, label: { formatter: "昨收 " + pre, fontSize: 10 } }],
+      },
+    }],
+  }, true);
+  c.resize();
+}
+
 async function loadIndices() {
   try {
     const j = await api("/api/indices");
@@ -140,14 +346,16 @@ function renderDash() {
   $("cGap").textContent = fmtMoney(ST.gap);
   $("cGap").className = "v " + (ST.gap <= 0 ? "down" : "up");
   const need = ST.need_daily_ret;
+  const dLeft = ST.days_left || 0, tdLeft = ST.est_trading_days || 0;
   if (ST.gap <= 0) {
     $("cNeedDaily").innerHTML = "🎉 已达成目标！";
-  } else if (need == null) {
-    $("cNeedDaily").textContent = "距截止日已无交易日";
+  } else if (dLeft <= 0) {
+    $("cNeedDaily").textContent = "实验期已结束，未达成（差 " + fmtMoney(ST.gap) + "）";
+  } else if (need == null || tdLeft <= 0) {
+    $("cNeedDaily").textContent = "剩余 " + dLeft + " 个自然日暂无交易日（假期段，待节后自动重算）";
   } else {
-    const shortPct = (ST.gap / Math.max(ST.target, 1)) * 100;
-    $("cNeedDaily").innerHTML = "还需日均收益 <b class='gold-txt'>" + fmtPct(need) +
-      "</b>（当前缺口 " + shortPct.toFixed(1) + "% 的目标）";
+    $("cNeedDaily").innerHTML = "剩余 " + dLeft + " 天（约 " + tdLeft + " 个交易日），" +
+      "需日均收益 <b class='gold-txt'>" + fmtPct(need) + "</b>（当前缺口 " + fmtMoney(ST.gap) + "）";
   }
 
   $("cAlloc").textContent = [fmtMoney0(ST.cash), fmtMoney0(ST.mv_eq), fmtMoney0(ST.mv_bond)].join(" / ");
@@ -168,6 +376,9 @@ function renderDash() {
     $("cViewMeta").textContent = (lr.date || "") + " 评分" +
       (lr.market_score >= 0 ? "+" : "") + lr.market_score +
       " · " + (lr.source || "") + (lr.index_close ? " · 收盘 " + lr.index_close : "");
+    $("cViewCalc").innerHTML = lr.calc
+      ? `<details><summary class="small" style="cursor:pointer;color:#4e9cff">🧮 评分怎么算的</summary><div class="small" style="margin-top:4px">${calcBlock(lr.calc)}</div></details>`
+      : "";
   } else {
     $("cViewTitle").textContent = "尚未运行";
     $("cViewMeta").textContent = "收盘后点击右上角按钮，AI 会给出今天的操作建议";
@@ -311,11 +522,14 @@ function redrawAll() {
   if (!echartsOK()) return;
   const page = document.querySelector("nav.tabs button.on")?.dataset.tab;
   if (page === "dash") {
-    drawMain(); drawPie(); drawScore(); drawAIDir();
+    drawMain(); drawPie(); drawScore(); drawAIDir(); renderIntraday();
   } else if (page === "backtest") {
     drawBtChart();
+  } else if (page === "micro") {
+    drawMicroCharts();
   }
-  ["chMain", "chPie", "chScore", "chAIDir", "chBt"].forEach(id => {
+  ["chMain", "chPie", "chScore", "chAIDir", "chBt",
+   "chMicroTrend", "chMicroHeat"].forEach(id => {
     const el = $(id);
     if (el && elVisible(el)) {
       const c = echarts.getInstanceByDom(el);
@@ -335,18 +549,22 @@ function axisCommon() {
 function drawMain() {
   const c = chartInit("chMain");
   if (!c) return;
-  const init = ST.initial;
-  const xs = HIST.map(h => h.date);
-  const tot = HIST.map(h => h.total);
-  // 沪深300 同起点对比
-  const firstIdx = HIST.find(h => h.index_close != null);
-  const idxScale = firstIdx ? init / firstIdx.index_close : 0;
-  const idxVals = HIST.map(h => (h.index_close != null ? h.index_close * idxScale : null));
-  const lastSnap = HIST[HIST.length - 1];
-  if (lastSnap && Math.abs(lastSnap.total - ST.total) > 0.005 && !ST.demo) {
-    // 今日净值已出但快照未生成时，补一个今日点位
-    xs.push(ST.today); tot.push(ST.total); idxVals.push(null);
-  } else if (!HIST.length) {
+  // 最近连续 7 个交易日（服务端已自愈回填缺失快照；connectNulls 兜底补线）
+  const H = HIST.slice(-7);
+  const xs = H.map(h => h.date);
+  const tot = H.map(h => h.total);
+  // 沪深300 同起点：按本窗口首日的总资产缩放（同窗公平对比）
+  const firstIdx = H.find(h => h.index_close != null);
+  const anchor = tot.length ? tot[0] : ST.initial;
+  const idxScale = firstIdx ? anchor / firstIdx.index_close : 0;
+  const idxVals = H.map(h => (h.index_close != null ? h.index_close * idxScale : null));
+  if (xs.length && xs[xs.length - 1] === ST.today) {
+    // 今天已有快照：用实时估值覆盖末点（净值/仓位刚变动过）
+    if (!ST.demo && Math.abs(tot[tot.length - 1] - ST.total) > 0.005) {
+      tot[tot.length - 1] = ST.total;
+    }
+  } else {
+    // 今日净值已出但快照未生成时，叠加今日实时总资产点位
     xs.push(ST.today); tot.push(ST.total); idxVals.push(null);
   }
   c.setOption({
@@ -355,7 +573,8 @@ function drawMain() {
     series: [
       {
         name: "账户总资产", type: "line", data: tot.map((v, i) => [xs[i], v]),
-        smooth: true, showSymbol: false, lineStyle: { width: 2.5 },
+        smooth: true, showSymbol: false, connectNulls: true,
+        lineStyle: { width: 2.5 },
         areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [{ offset: 0, color: "rgba(78,156,255,.35)" },
                         { offset: 1, color: "rgba(78,156,255,0)" }] } },
@@ -364,7 +583,7 @@ function drawMain() {
           label: { formatter: "目标 ¥" + ST.target, color: "#f7b731" } },
       },
       {
-        name: "沪深300(同起点)", type: "line",
+        name: "沪深300(同起点)", type: "line", connectNulls: true,
         data: idxVals.map((v, i) => v == null ? null : [xs[i], v]),
         smooth: true, showSymbol: false, lineStyle: { width: 1.2, type: "dotted" },
       },
@@ -522,15 +741,78 @@ function drawHints() {
   else if (ST.exec_mode === "manual") lines.push("人工执行模式：每天收盘后运行一次，AI 输出“今日建议”（默认按此执行即可）；你在支付宝/天天基金操作后，到「指令与成交」页点“已执行”录入实际成交，账本才与真实资金一致。");
   else lines.push("模拟自动成交模式（仅演示）：昨日建议会自动按最新净值成交。真实资金请把 config.json 的 exec_mode 改为 manual。");
   const ap = ST.api_usage;
-  lines.push("数据通道提示：" + (ap
-    ? "今天已调用 " + ap.calls_today + " 次" + (ap.daily_limit != null ? "/" + ap.daily_limit + "（智兔）" : "（akshare/东财 免费不限）")
-    : "？") + "；日常运行只需少量调用，界面轮询只读缓存，不会烧配额。");
+  lines.push("数据通道提示：" + (ap ? quotaLong(ap) : "？")
+    + "；**只有智兔有每日 200 次上限**，东财/新浪/腾讯/akshare 都是免费公开通道、不限量；"
+    + "界面轮询只读缓存，不会烧配额。");
+  const itd = ST.intraday || {};
+  if (itd.summary) {
+    lines.push("午间诊断（" + esc(itd.time || "") + "）：" + esc(itd.summary) +
+      (itd.hit == null ? "（收盘后自动结算）" : (itd.hit ? "｜已结算：命中 ✓" : "｜已结算：未中 ✗")));
+  }
+  const ro = ST.risk_overlay || {};
+  if (ro && ro.action && ro.action !== "none") {
+    const cls = ro.scale < 1 ? "down" : "up";
+    lines.push("风险过滤器（事件+行情模型，只降不升）：" +
+      (ro.p_up == null ? "" : "P(次日上涨) " + Math.round(ro.p_up * 100) + "% → ") +
+      "权益目标仓位×" + Math.round((ro.scale ?? 1) * 100) + "%" +
+      (ro.mapping ? "（映射 " + ro.mapping + "）" : "") +
+      "；训练样本 " + (ro.days || "—") + " 个交易日。");
+  }
   (ST.warnings || []).forEach(w => lines.push(w));
   if (!lines.length) lines.push("一切正常。收盘后运行今日研判即可。");
   box.innerHTML = lines.map(l => `<div class="mut" style="padding:3px 0">· ${esc(l)}</div>`).join("");
 }
 
 /* ---------- 每日研判 ---------- */
+/* ---------- 评分计算明细（records.calc：这一天的分到底怎么算的） ---------- */
+function calcBlock(raw) {
+  let c;
+  try { c = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (e) { return ""; }
+  if (!c || !Array.isArray(c.parts)) return "";
+  const s = v => (v >= 0 ? "+" : "") + (Math.round(v * 10) / 10);
+  const row = t => `<div class="mut small" style="margin-left:16px">${t}</div>`;
+  let h = `<div style="line-height:1.8">`;
+  for (const p of c.parts) {
+    let head = `<b>${esc(p.label)}</b> ${s(p.score)}`
+      + (p.capped != null ? ` →限幅 ${s(p.capped)}` : "")
+      + ` × ${Math.round((p.weight || 0) * 100)}% = <b>${s(p.contrib)}</b>`;
+    h += `<div>${head}</div>`;
+    const d = p.detail || {};
+    if (p.key === "quant" && d.factors && d.factors.length) {
+      h += `<details style="margin-left:16px"><summary class="mut small" style="cursor:pointer">因子明细（Σ=${s(d.factors.reduce((a, f) => a + (f.impact || 0), 0))}）</summary>`
+        + d.factors.map(f => row(`${esc(f.name)} <b>${s(f.impact)}</b>　${esc(f.note || "")}`)).join("")
+        + `</details>`;
+    }
+    if (p.key === "news") {
+      h += row(`口径：${esc(d.mode || "")}，逐条强度合计 ${s(d.net)}${d.net_mode === "sum"
+        ? "（旧口径：直接限幅 ±8）"
+        : ` → 按刻度换算 ÷${d.net_scale} = 净情绪 ${s(d.net_scaled)}`} → ×振幅 ${d.amplitude}（合成前再按 ±25 限幅）`);
+      if (d.counts) h += row("标签分布：" + Object.keys(d.counts).map(k => `${LABEL_TXT[k] || k}×${d.counts[k]}`).join("、"));
+      if ((d.items || []).length) {
+        h += `<details style="margin-left:16px"><summary class="mut small" style="cursor:pointer">主要贡献条目（按|强度| top）</summary>`
+          + d.items.map(i => row(`[<b>${s(i.strength)}</b>] ${LABEL_TXT[i.label] || i.label}　${esc(i.title)}`)).join("")
+          + `</details>`;
+      }
+    }
+    if (p.key === "micro") {
+      (d.subs || []).forEach(x => { h += row(`${x.name} <b>${s(x.score)}</b>　${esc(x.formula)}（子权重 ${x.weight}，缺维度自动重归一）`); });
+      const dd = d.data || {};
+      const pct = v => v == null ? "—" : Math.round(v * 100) + "%";
+      h += row(`原始数据：涨 ${dd.rise ?? "—"} / 平 ${dd.deuce ?? "—"} / 跌 ${dd.fall ?? "—"}；涨停 ${dd.zt ?? "—"}、炸板 ${dd.zb ?? "—"}、跌停 ${dd.dt ?? "—"}；晋级率 ${pct(dd.promotion_rate)}（对 ${esc(dd.prev_date || "—")}）、炸板率 ${pct(dd.zb_rate)}`);
+      if ((d.flags || []).length) h += row(`⚠ 极值阻尼：${d.flags.includes("overheat") ? "情绪过热（>70 半衰减，防沸点追高）" : ""}${d.flags.includes("freezing") ? "情绪冰点（<-70 半衰减，防割在冰点）" : ""}`);
+    }
+  }
+  const sm = c.smooth || {};
+  h += `<div>规则合成原始分 <b>${s(c.raw)}</b>`
+    + (sm.enabled
+      ? ` → EMA 平滑（α=${sm.alpha}，昨日 ${sm.prev != null ? s(Math.round(sm.prev * 10) / 10) : "无"}）→ <b>${s(c.smoothed)}</b>`
+      : "（EMA 平滑未启用）")
+    + `</div>`;
+  if (c.llm) h += row(`🤖 ${esc(c.llm.provider || "LLM")} 独立研判 ${s(c.llm.score)}（展示/记录用；分仓执行按规则分 ${s(c.llm.rule_score)}）`);
+  h += `<div>当日记录分：<b>${s(c.final_recorded)}</b></div></div>`;
+  return h;
+}
+
 function renderRecords() {
   const box = $("recList");
   if (!RECS.length) { box.innerHTML = '<div class="mut">暂无记录</div>'; return; }
@@ -546,6 +828,8 @@ function renderRecords() {
         ${r.index_close ? "· 收盘 " + r.index_close + (r.market_chg != null ? "（" + fmtPct(r.market_chg) + "）" : "") : ""}
         · ${esc(r.source)}</span>
       </div>
+      ${r.calc ? `<details style="margin-top:6px"><summary class="small" style="cursor:pointer;color:#4e9cff">🧮 这一天分数是怎么算的</summary><div class="small" style="margin-top:4px">${calcBlock(r.calc)}</div></details>`
+        : `<div class="mut small" style="margin-top:4px">（旧版记录，未存计算明细；新版起每条自动生成）</div>`}
       <details style="margin-top:6px">
         <summary class="mut small" style="cursor:pointer">查看全文</summary>
         <pre class="line">${esc(r.analysis)}</pre>
@@ -640,10 +924,14 @@ function renderOrders() {
   tb.innerHTML = `<table><thead><tr>
     <th>建议日</th><th>基金</th><th>动作</th><th>金额/份额</th><th>执行日</th><th>净值</th><th>费用</th><th>状态</th>
   </tr></thead><tbody>` + rows.map(o => {
+    // 名称解析顺序：接口自带 → 状态接口里的全量名称映射 → 基金列表 → 代码兜底
     const fund = (FUNDS.find(f => f.code === o.fund_code) || {});
+    const nm = o.fund_name || (ST && ST.fund_names && ST.fund_names[o.fund_code])
+      || fund.name || o.fund_code;
+    const short = nm === o.fund_code ? nm : nm;
     return `<tr>
       <td>${esc(o.order_date)}</td>
-      <td>${esc(o.fund_name || fund.name || o.fund_code)}</td>
+      <td title="${esc(o.fund_code)}">${esc(short)}<span class="mut small" style="margin-left:6px">${esc(o.fund_code)}</span></td>
       <td>${o.action === "buy" ? '<span class="up">申购</span>' : '<span class="down">赎回</span>'}</td>
       <td>${fmtMoney(o.amount)}${o.fill_shares ? " → " + fmtNum(o.fill_shares, 2) + " 份" : ""}</td>
       <td>${esc(o.fill_date || "—")}</td>
@@ -742,18 +1030,377 @@ $("btnPool").onclick = async () => {
 };
 
 /* ---------- 设置 ---------- */
+/* 目标与本金都是可配置的：这里统一算"目标较本金增长多少"，避免各处置灰字。
+   目标 = 投入 × account.target_multiple（默认 1.3），由后端 state 下发。 */
+function targetPct() {
+  const init = Number(ST?.initial || 0);
+  const tgt = Number(ST?.target || 0);
+  if (init > 0 && tgt > 0) return Math.round((tgt / init - 1) * 100);
+  const mult = Number(ST?.target_multiple);
+  return Number.isFinite(mult) && mult > 0 ? Math.round((mult - 1) * 100) : 30;
+}
+function pctOfTarget() {
+  const p = targetPct();
+  return p >= 0 ? "+" + p + "%" : p + "%";
+}
+/* ===== 参数开关面板（后端 fundai/param_docs.py 提供说明，configedit.py 负责写入） ===== */
+let PDOC = null;      // /api/config 载荷：params / values / defaults / toggles / groups
+let PEDIT = {};       // 未保存的改动 {dottedKey: value}
+let PRESET = [];      // 待"重置为代码默认"的键
+let PADV = false;     // 是否显示进阶参数
+
+const KINDTXT = { bool: "开关", number: "数值", int: "整数", enum: "枚举",
+  list: "多选", text: "文本", map: "结构" };
+
+async function loadParamPanel(force) {
+  if (PDOC && !force) { renderParamPanel(); return; }
+  try {
+    const j = await api("/api/config?params=1");
+    PDOC = j;
+    PEDIT = {}; PRESET = [];
+    renderParamPanel();
+  } catch (e) {
+    $("paramBadge").textContent = "加载失败";
+    $("paramNote").innerHTML = `<span class="mut">${esc(e.message)}</span>`;
+  }
+}
+
+function pCur(key) {
+  if (key in PEDIT) return PEDIT[key];
+  return (PDOC && PDOC.values) ? PDOC.values[key] : undefined;
+}
+function pDirtyCount() { return Object.keys(PEDIT).length + PRESET.length; }
+
+function pFmt(key, meta, v) {
+  if (v === undefined || v === null) return "—";
+  if (meta.kind === "bool") return v ? "开" : "关";
+  if (meta.kind === "list") return (v || []).join(" / ") || "（空）";
+  if (meta.unit === "比例") return Number(v).toFixed(3);
+  return String(v);
+}
+
+function pCtl(key, meta) {
+  const v = pCur(key);
+  const id = "p_" + key.replace(/\./g, "_");
+  if (meta.kind === "number" || meta.kind === "int") {
+    const mn = meta.min ?? 0, mx = meta.max ?? Math.max(1, Number(v) * 2 || 1);
+    const st = meta.step ?? (meta.kind === "int" ? 1 : 0.01);
+    const rng = (meta.kind === "number")
+      ? `<input type="range" data-pk="${esc(key)}" min="${mn}" max="${mx}" step="${st}" value="${Number(v ?? 0)}">` : "";
+    return `${rng}<input id="${id}" type="number" data-pk="${esc(key)}" min="${mn}" max="${mx}" step="${st}" value="${Number(v ?? 0)}">
+      <span class="mut small">${esc(meta.unit || "")} ${mn}–${mx}</span>`;
+  }
+  if (meta.kind === "enum") {
+    const opts = (meta.options || []).map(o =>
+      `<option value="${esc(o.value)}"${String(v) === String(o.value) ? " selected" : ""}>${esc(o.label || o.value)}</option>`).join("");
+    return `<select data-pk="${esc(key)}">${opts}</select>`;
+  }
+  if (meta.kind === "list") {
+    const cur = new Set((v || []).map(String));
+    return `<div class="opts">` + (meta.options || []).map(o =>
+      `<label><input type="checkbox" data-pk="${esc(key)}" data-multi="1" value="${esc(o.value)}"
+        ${cur.has(String(o.value)) ? "checked" : ""}> ${esc(o.label || o.value)}</label>`).join("") + `</div>`;
+  }
+  if (meta.kind === "text") {
+    const tp = (PDOC.sensitive || []).includes(key) ? "password" : "text";
+    return `<input id="${id}" type="${tp}" data-pk="${esc(key)}" value="${esc(v ?? "")}"
+      style="min-width:260px" autocomplete="off">`;
+  }
+  return `<span class="mut small">${esc(KINDTXT[meta.kind] || meta.kind)}：请直接编辑 config.json</span>`;
+}
+
+function renderParamPanel() {
+  if (!PDOC) return;
+  const groups = PDOC.groups || [];
+  const toggles = new Set(PDOC.toggles || []);
+  const dirty = pDirtyCount();
+  $("paramBadge").textContent = `${(PDOC.params || []).length} 个参数 · ${toggles.size} 个开关`
+    + (dirty ? ` · 待保存 ${dirty}` : "");
+  $("paramBadge").className = "badge" + (dirty ? " warn" : "");
+  $("paramNote").innerHTML = `每个参数都带「作用 / 调大调小会怎样」说明；开关点一下即改。`
+    + `保存时会先做类型/范围/跨字段一致性校验，并自动备份 config.json（可一键回滚）。`;
+
+  // 一排开关（bool 参数）
+  const tgl = (PDOC.params || []).filter(p => toggles.has(p.key));
+  $("paramToggles").innerHTML = tgl.map(p => {
+    const on = !!pCur(p.key);
+    const dead = p.dead ? "（dead：无读取点）" : "";
+    return `<div class="sw ${on ? "on" : ""}" data-pk="${esc(p.key)}" data-toggle="1">
+      <div class="track"></div>
+      <div class="txt"><b>${esc(p.label)}</b>
+        <span>${esc((p.desc || "").slice(0, 96))}${dead}</span></div></div>`;
+  }).join("");
+
+  // 分组参数表
+  const byGroup = {};
+  (PDOC.params || []).forEach(p => {
+    if (toggles.has(p.key)) return;               // 已在上方开关区
+    (byGroup[p.group] = byGroup[p.group] || []).push(p);
+  });
+  const sect = groups.filter(g => byGroup[g]).map(g => {
+    const rows = byGroup[g].slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+    const shown = rows.filter(p => PADV || !p.advanced);
+    const hidden = rows.length - shown.length;
+    const body = shown.map(p => {
+      const d = p.dead ? " dead" : "";
+      const df = (p.key in PEDIT) ? " dirty" : "";
+      return `<div class="prow${d}${df}" data-row="${esc(p.key)}">
+        <div class="pname">${esc(p.label)} <span class="mut small">[${esc(KINDTXT[p.kind] || p.kind)}]</span>
+          ${p.advanced ? '<span class="mut small">·进阶</span>' : ""}
+          <code>${esc(p.key)}</code></div>
+        <div class="pctl">${pCtl(p.key, p)}
+          <span class="rst" data-reset="${esc(p.key)}">重置默认</span></div>
+        <div class="pdesc">${esc(p.desc || "")}
+          ${p.effect ? `<span class="eff">影响：${esc(p.effect)}</span>` : ""}
+          <span class="mut">当前：${esc(pFmt(p.key, p, pCur(p.key)))}</span></div>
+      </div>`;
+    }).join("");
+    return `<details class="pgroup" ${g === "仓位与上限" ? "open" : ""}>
+      <summary>${esc(g)} <span class="mut small">${rows.length} 项${hidden ? `（${hidden} 项进阶隐藏）` : ""}</span></summary>
+      ${body}</details>`;
+  }).join("");
+  $("paramGroups").innerHTML = sect;
+  bindParamEvents();
+  renderSrcDetail();
+}
+
+function bindParamEvents() {
+  document.querySelectorAll("[data-toggle]").forEach(el => {
+    el.onclick = () => {
+      const k = el.dataset.pk;
+      const now = !pCur(k);
+      PEDIT[k] = now;
+      PRESET = PRESET.filter(x => x !== k);
+      renderParamPanel();
+    };
+  });
+  document.querySelectorAll("[data-pk]:not([data-toggle])").forEach(el => {
+    const k = el.dataset.pk;
+    const meta = (PDOC.params || []).find(p => p.key === k) || {};
+    const handler = () => {
+      if (el.dataset.multi) {
+        const cur = new Set((PEDIT[k] !== undefined ? PEDIT[k] : (PDOC.values[k] || [])).map(String));
+        if (el.checked) cur.add(el.value); else cur.delete(el.value);
+        PEDIT[k] = Array.from(cur);
+      } else if (meta.kind === "int" || meta.kind === "number") {
+        PEDIT[k] = Number(el.value);
+      } else {
+        PEDIT[k] = el.value;
+      }
+      PRESET = PRESET.filter(x => x !== k);
+      // 同组联动：range 与 number 同步显示
+      document.querySelectorAll(`[data-pk="${CSS.escape ? CSS.escape(k) : k}"]`).forEach(o => {
+        if (o !== el && !o.dataset.multi) o.value = el.value;
+      });
+      const row = document.querySelector(`[data-row="${CSS.escape ? CSS.escape(k) : k}"]`);
+      if (row) row.classList.add("dirty");
+      const n = pDirtyCount();
+      $("paramBadge").textContent = `${(PDOC.params || []).length} 个参数 · ${(PDOC.toggles || []).length} 个开关 · 待保存 ${n}`;
+      $("paramBadge").className = "badge" + (n ? " warn" : "");
+    };
+    el.oninput = handler;   // range 拖动实时
+    el.onchange = handler;
+  });
+  document.querySelectorAll("[data-reset]").forEach(el => {
+    el.onclick = () => {
+      const k = el.dataset.reset;
+      delete PEDIT[k];
+      if (!PRESET.includes(k)) PRESET.push(k);
+      renderParamPanel();
+      toast("已标记重置：" + k + "（点『保存改动』生效）");
+    };
+  });
+}
+
+async function saveParamPanel() {
+  const n = pDirtyCount();
+  if (!n) { toast("没有待保存的改动"); return; }
+  const sen = Object.keys(PEDIT).filter(k => (PDOC.sensitive || []).includes(k));
+  let confirmSensitive = false;
+  if (sen.length) {
+    confirmSensitive = window.confirm("即将修改敏感键：\n" + sen.join("\n") +
+      "\n\n已自动备份 config.json，可回滚。确认继续？");
+    if (!confirmSensitive) return;
+  }
+  const btn = $("btnParamSave");
+  btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    const r = await api("/api/config/set", { method: "POST",
+      body: { set: PEDIT, reset: PRESET, confirm_sensitive: confirmSensitive } });
+    const changed = Object.keys(r.applied || {}).length;
+    toast(`已保存 ${changed} 项` + (r.restart_required?.length
+      ? `；需重启服务生效：${r.restart_required.join(", ")}` : ""), "ok");
+    (r.warnings || []).forEach(w => toast(w, "err"));
+    PEDIT = {}; PRESET = [];
+    await loadParamPanel(true);
+    await loadAll(true);
+  } catch (e) {
+    toast("保存失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "💾 保存改动";
+  }
+}
+
+const SRC_LABEL = { zhitu: "智兔数服", akshare: "AKShare", eastmoney: "东财/天天基金",
+  sina: "新浪财经", tencent: "腾讯行情", ths: "同花顺(涨停池)" };
+const PURPOSE_LABEL = { nav: "基金净值", index_kline: "指数K线", index_bars: "跨市场指数",
+  quote: "实时行情", index_profile: "基金概况" };
+
+function srcSnapshot() {
+  const u = (ST && ST.api_usage) || {};
+  return u.snapshot || u;
+}
+
+function renderSrcAlert() {
+  const s = srcSnapshot();
+  const panel = $("srcAlertPanel");
+  if (!panel) return;
+  const today = s.today || {};
+  const deg = !!s.degraded;
+  const exhausted = !!today.exhausted;
+  // 告警只认「当下是否真有问题」（2026-09-16 二次修复，用户："这个就没成功过"）：
+  //   · degraded           —— **首选源确实失败过**才退到备用（首选 0 次调用不算降级）
+  //   · has_recent_trouble —— 有源"连续失败达阈值且失败是新的"，或近 15 分钟内发生过切换
+  // 三处旧逻辑都会让提示永远挂着，已全部去掉：
+  //   ① "今日失败累计>0"（早上一次抖动挂一整天）；
+  //   ② "最后一次失败晚于最后一次成功"（对**失败后再没被调用**的源永真）；
+  //   ③ "当前供货不是首选"就算降级（首选源当天 0 次调用时属空判）。
+  const recent = (s.has_recent_trouble !== undefined)
+    ? !!s.has_recent_trouble : ((today.fail || 0) > 0);
+  const warn = deg || exhausted || recent;
+  panel.style.display = warn ? "" : "none";
+  if (!warn) return;
+  const act = Object.entries(s.active || {})
+    .filter(([k]) => k !== "probe")
+    .map(([k, v]) => `${PURPOSE_LABEL[k] || k}→${SRC_LABEL[v] || v}`).join("、") || "—";
+  const stale = (s.stale_sources || []).map(x => SRC_LABEL[x] || x).join("、");
+  const ztExhausted = !!(s.zhitu_exhausted ?? today.exhausted);
+  const ztLimit = s.zhitu_limit ?? today.limit;
+  const ztUsed = s.zhitu_today ?? (today.sources?.zhitu?.calls || 0);
+  $("srcAlertBadge").textContent = ztExhausted ? "智兔配额耗尽"
+    : (deg ? "已降级" : (stale ? "通道可疑" : "近期切换"));
+  $("srcAlertBadge").className = "badge warn";
+  const win = Math.round((s.window_seconds || 3600) / 60);
+  const fwin = Math.round((s.failover_fresh_seconds || 900) / 60);
+  $("srcAlertNote").innerHTML = `智兔 <b>${ztUsed}</b>${ztLimit != null ? `/${ztLimit}（剩 ${s.zhitu_remaining ?? today.remaining}）` : "（未配 Token，不限）"}`
+    + ` · 其它通道 ${s.other_calls_today ?? Math.max(0, (today.calls ?? 0) - ztUsed)} 次（不限）`
+    + ` · 近 ${fwin} 分钟切换 ${s.fresh_failover ?? 0} 次`
+    + ` · 当前供货：${esc(act)}`
+    + (stale ? ` · <span class="warn-txt">可疑通道：${esc(stale)}</span>` : "")
+    + (s.degraded_reason ? `<br>原因：${esc(s.degraded_reason)}` : "")
+    + `<br><span class="mut small">判定口径：连续失败 ≥${s.stale_min_fails ?? 3} 次且失败在 ${Math.round((s.stale_ttl_seconds || 1800) / 60)} 分钟内才算"该源有问题"；失败超时即视为已自愈（恢复后提示自动消失）。</span>`;
+  const fo = (s.failover || []).slice(0, 3);
+  $("srcAlertDetail").innerHTML = fo.length ? fo.map(f =>
+    `<div class="src-row"><span class="nm">${esc(f.ts?.slice(11) || "")}</span>
+      <span>${esc(PURPOSE_LABEL[f.purpose] || f.purpose || "")}：${esc(SRC_LABEL[f.from] || f.from || "?")}
+      → ${esc(SRC_LABEL[f.to] || f.to || "?")}</span>
+      <span class="mut small">${esc((f.reason || "").slice(0, 90))}</span></div>`).join("")
+    : `<div class="mut small">近期无通道切换记录（恢复后提示会自动消失）。</div>`;
+}
+
+/* ---------- 人工介入额度（用户要求：每天一共 ≤50 次） ---------- */
+/* 这个卡片存在的意义：让"要我点几次"变成**看得见的数字**。
+   旧版把额度写死在文案里（"最多 50 条复核打标"），而打标之外还有成交回填、
+   合并搜索、重建备选池等动作全都没计数，用户根本不知道自己实际上用掉了多少。 */
+function renderBudget() {
+  if (!$("nBudget")) return;
+  const iv = (ST && ST.interventions) || null;
+  if (!iv || iv.error) {
+    $("nBudget").textContent = "—";
+    $("nBudgetSub").textContent = iv ? ("统计不可用：" + iv.error) : "全系统合计上限 50 次/天";
+    return;
+  }
+  const used = iv.used || 0, budget = iv.budget || 50;
+  $("nBudget").textContent = `${used} / ${budget}`;
+  $("nBudget").className = "v " + (iv.over ? "down" : "up");
+  const kinds = Object.entries(iv.by_kind || {}).map(([k, n]) => {
+    const lab = (iv.kinds && iv.kinds[k] && iv.kinds[k].label) || k;
+    return `${lab} ${n}`;
+  }).join(" · ");
+  $("nBudgetSub").innerHTML = `剩 ${iv.left} 次 · <b>AI 自动完成 ${iv.auto} 次</b>`
+    + (kinds ? `<br>${kinds}` : "<br>今日还没有需要你动手的动作")
+    + (iv.over ? `<br><span class="warn-txt">已超出 ${budget} 次额度，说明有动作没被自动化，请反馈</span>` : "");
+}
+
+function renderSrcDetail() {  if (!$("srcDetail")) return;
+  const s = srcSnapshot();
+  const today = s.today || {}, yest = s.yesterday || {};
+  const srcs = today.sources || {};
+  const rows = Object.keys(srcs).filter(k => (srcs[k].calls || 0) > 0 ||
+    (SRC_LABEL[k] && (srcs[k].limit || 0) > 0));
+  const badge = $("srcBadge");
+  if (badge) {
+    badge.textContent = `${s.provider || ST?.data_source || ""} · 今日 ${today.calls ?? 0}`
+      + (today.limit != null ? `/${today.limit}` : "");
+    badge.className = "badge" + (s.degraded || today.exhausted ? " warn" : " live");
+  }
+  const note = $("srcNote");
+  if (note) {
+    const act = Object.entries(s.active || {})
+      .map(([k, v]) => `${PURPOSE_LABEL[k] || k} → ${SRC_LABEL[v] || v}`).join("；") || "（今日尚无在线调用）";
+    note.innerHTML = `计数已**持久化到磁盘**（data/api_usage.json），改代码/重启服务都不会清零；`
+      + `按来源分别统计成功与失败。<br>当前供货：${esc(act)}`
+      + (s.degraded ? ` · <span class="gold-txt">已降级：${esc(s.degraded_reason || "")}</span>` : "");
+  }
+  const bar = (v, mx) => {
+    const p = mx ? Math.max(2, Math.min(100, v / mx * 100)) : 0;
+    return `<span class="bar"><i style="width:${p}%"></i></span>`;
+  };
+  let html = rows.map(k => {
+    const x = srcs[k] || {};
+    const lim = x.limit;
+    const bad = (x.fail || 0) > 0;
+    return `<div class="src-row"><span class="nm">${esc(SRC_LABEL[k] || k)}</span>
+      <span>调用 <b>${x.calls ?? 0}</b> · 成功 ${x.ok ?? 0} · <span class="${bad ? "gold-txt" : "mut"}">失败 ${x.fail ?? 0}</span></span>
+      ${lim ? `${bar(x.calls || 0, lim)}<span class="mut small">剩余 ${Math.max(0, lim - (x.calls || 0))}/${lim}</span>` : '<span class="mut small">无配额上限</span>'}
+      <span class="mut small">${x.last_ok ? "最近成功 " + esc(x.last_ok.slice(11)) : ""}
+        ${x.last_error ? " · 最近错误：" + esc(String(x.last_error).slice(0, 60)) : ""}</span></div>`;
+  }).join("");
+  if (!rows.length) html = `<div class="mut small">今日暂无在线调用（全部走本地缓存）。</div>`;
+  html += `<div class="src-row"><span class="nm">昨日</span><span>调用 ${yest.calls ?? 0} 次 · 失败 ${yest.fail ?? 0} 次</span>
+    <span class="mut small">（计数按日期分桶，保留 30 天）</span></div>`;
+  const days = (s.days || []).slice(0, 14).reverse();
+  if (days.length) {
+    html += `<div class="src-row"><span class="nm">近 14 天</span><span class="mut small">` +
+      days.map(d => `${esc(String(d.date).slice(5))}:${d.calls}${d.fail ? `(败${d.fail})` : ""}`).join("　") +
+      `</span></div>`;
+  }
+  const fo = (s.failover || []).slice(0, 5);
+  if (fo.length) {
+    html += `<div class="src-row"><span class="nm">通道切换</span><span class="mut small">` +
+      fo.map(f => `${esc(String(f.ts || "").slice(5, 16))} ${esc(PURPOSE_LABEL[f.purpose] || f.purpose || "")}:${esc(SRC_LABEL[f.from] || f.from || "?")}→${esc(SRC_LABEL[f.to] || f.to || "?")}`).join("<br>") +
+      `</span></div>`;
+  }
+  $("srcDetail").innerHTML = html;
+}
+
+$("btnParamSave").onclick = saveParamPanel;
+$("btnParamUndo").onclick = () => { PEDIT = {}; PRESET = []; renderParamPanel(); toast("已撤销未保存的改动"); };
+$("btnParamRollback").onclick = async () => {
+  if (!window.confirm("用最近一份备份覆盖 config.json？（当前配置会先被备份）")) return;
+  try {
+    const r = await api("/api/config/rollback", { method: "POST", body: {} });
+    toast("已回滚：" + (r.restored_from || ""), "ok");
+    await loadParamPanel(true); await loadAll(true);
+  } catch (e) { toast("回滚失败：" + e.message, "err"); }
+};
+$("paramAdvanced").onchange = (e) => { PADV = !!e.target.checked; renderParamPanel(); };
+
 function renderSettings() {
   const cfg = ST.config || {};
   const st = cfg.strategy || {};
   const idx = cfg.index || {};
-  const llm = (cfg.llm_enabled ? "启用" : "关闭") + (cfg.llm_provider ? "（" + esc(cfg.llm_provider) + "）" : "");
+  const llm = cfg.llm_enabled ? ("已启用（" + esc(cfg.llm_provider || "LLM") + "）")
+    : (cfg.llm_needs_key ? "开关已开但 api_key 为空（未生效）"
+                         : "未启用");
   $("setAccount").innerHTML = `<table><tbody>
     <tr><td>账户名称</td><td>${esc(ST.name)}</td></tr>
-    <tr><td>起始资金</td><td>${fmtMoney(ST.initial)}</td></tr>
-    <tr><td>挑战目标</td><td class="gold-txt">${fmtMoney(ST.target)}（+${((ST.target / ST.initial - 1) * 100).toFixed(0)}%）</td></tr>
-    <tr><td>实验周期</td><td>${esc(ST.start)} → ${esc(ST.end)}（${esc(ST.days_left)} 天剩余）</td></tr>
+    <tr><td>起始资金（可自定义）</td><td>${fmtMoney(ST.initial)}</td></tr>
+    <tr><td>目标线</td><td class="gold-txt">${fmtMoney(ST.target)}（较起始资金 ${pctOfTarget()}）</td></tr>
+    <tr><td>目标倍数</td><td>${(ST.target_multiple ?? (ST.target / ST.initial)).toFixed(2)}×（在「参数开关面板 → 运行与服务」里改起始资金/倍数，保存即生效）</td></tr>
+    <tr><td>观察期</td><td>${esc(ST.start)} → ${esc(ST.end)}（${esc(ST.days_left)} 天剩余）</td></tr>
     <tr><td>执行模式</td><td>${ST.exec_mode === "manual" ? "人工执行：AI 出建议 → 你亲自执行 → 录入成交" : "模拟自动成交（演示）"}</td></tr>
-    <tr><td>数据源与API配额</td><td>${esc(ST.data_source)}${ST.api_usage ? " · 今日已用 " + ST.api_usage.calls_today + " 次" + (ST.api_usage.daily_limit != null ? "/" + ST.api_usage.daily_limit + " 次" : "（智兔不限/akshare免费）") : ""}</td></tr>
+    <tr><td>数据源与API配额</td><td>${esc(ST.data_source)}${ST.api_usage ? " · " + esc(quotaLong(ST.api_usage)) : ""}</td></tr>
     <tr><td>今日</td><td>${esc(ST.today)}</td></tr>
   </tbody></table>`;
   $("setStrategy").innerHTML = `<table><tbody>
@@ -766,7 +1413,7 @@ function renderSettings() {
     <tr><td>7天锁定期</td><td>持有不足 ${st.min_hold_days || 7} 天的份额禁止赎回（避开 1.5% 惩罚性费率）</td></tr>
     <tr><td>消息面情绪</td><td>东财快讯利好/利空关键词情绪（相关性过滤 + 净情绪阻尼 ${st.news_amp ?? 8}），按 ${Math.round((st.news_weight ?? 0.35) * 100)}% 权重与量化分合成</td></tr>
     <tr><td>止损/止盈线（风控）</td><td>单只浮亏≤${fmtPct(st.risk?.fund_stop_loss_pct ?? -0.08)}清仓；浮盈≥${fmtPct(st.risk?.fund_take_profit_pct ?? 0.1)}止盈一半、≥${fmtPct(st.risk?.fund_take_profit_full_pct ?? 0.25)}全部落袋；总资产较本金亏≥${fmtPct(st.risk?.portfolio_stop_pct ?? -0.15)}→组合止损（权益≤25%）；自峰值回撤≥${fmtPct(st.risk?.peak_trailing_pct ?? 0.1)}且评分&lt;${st.risk?.reentry_score ?? 25}→跟踪止盈。触发后进入 ${st.risk?.rearm_days ?? 7} 个交易日防御冷却（只减不加）；冷却期内评分 &gt; ${st.risk?.rearm_bull_score ?? 50} 或再触发单只止损/止盈时例外放行、可直接调仓</td></tr>
-    <tr><td>LLM 深度研判</td><td>${llm}（config.json 填入 api_key 并 enabled=true 后，每日研判全文由大模型撰写）</td></tr>
+    <tr><td>LLM 深度研判</td><td>${llm}（config.json → llm：enabled=true 且 api_key 非空即生效；改完**无需重启**，服务自动热加载，下次研判全文由大模型撰写）</td></tr>
   </tbody></table>`;
   $("dailyGuide").textContent =
 `1）每天 A 股收盘后（15:00 后；基金净值通常 20:00~24:00 公布），运行一次：
@@ -788,7 +1435,7 @@ function renderSettings() {
 6）数据源默认 AKShare（基金净值，免费无配额；如未安装会自动降级）+ 智兔数服（指数，
    Token 已在 config.json）兜底东财；程序带缓存节流，日常每天只需数次调用。
 7）可选自动提醒：Windows 任务计划每天 20:40 运行（示例，路径按实际改）：
-     schtasks /Create /TN fundai_daily /TR "cmd /c cd /d F:\\DSHtemporary\\fund200ai ^&^& python app.py run-daily >> data\\daily.log" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 20:40`;
+     schtasks /Create /TN fundai_daily /TR "cmd /c cd /d <你的项目目录> ^&^& python app.py run-daily >> data\\daily.log" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 20:40`;
 }
 
 /* ---------- 回测 ---------- */
@@ -838,7 +1485,7 @@ function renderBt(res) {
       <div class="sub">成交 ${res.trades} 笔 · 手续费 ${fmtMoney(res.fees)}</div></div>`;
   $("btNote").innerHTML = "说明：回测与实盘共用同一套引擎与规则，手续费、7天锁定期、T+1 生效均与实盘一致。" +
     (res.demo ? "本次使用的是<b>合成演示数据</b>（本机无法访问在线行情时自动降级）。" : "本次使用在线真实净值数据。") +
-    "<br>⚠️ 历史回测结果绝不代表未来收益。半年 +50% 需市场显著上涨，属于较高目标，请把它当视频实验看待。";
+    "<br>⚠️ 历史回测结果绝不代表未来收益。目标 " + pctOfTarget() + " 需市场显著上涨，属于较高目标，请把它当视频实验看待。";
   // 图表交给 redrawAll 在“页签可见 + echarts 就绪”时绘制
   whenEcharts(redrawAll);
 }
@@ -884,6 +1531,8 @@ document.querySelectorAll("nav.tabs button").forEach(b => {
     setTimeout(redrawAll, 120);
     if (b.dataset.tab === "backtest") tryRenderBt();
     if (b.dataset.tab === "news") loadNewsTab();
+    if (b.dataset.tab === "micro") loadMicroTab();
+    if (b.dataset.tab === "settings") loadParamPanel();
   };
 });
 
@@ -917,6 +1566,66 @@ window.addEventListener("resize", () => {
 
 /* 每 60 秒自动刷新 */
 setInterval(() => { if (!document.hidden) loadAll(true); }, 60000);
+/* 大盘信息独立轮询（**盘中每 60 秒**，远严于"至少 15 分钟"的要求）：
+   指数条 + 大盘概览 + 今日分时走轻量接口（服务端另有 2~5 分钟缓存），
+   不拖累 60 秒一次的整页 loadAll（那条链会拉账本/持仓/记录）。
+   非交易时段自动降频到 5 分钟，避免白刷。 */
+const MKT_TICK = 60000, MKT_TICK_OFF = 300000;
+let _mktTimer = null;
+function mktLoop() {
+  if (!document.hidden) loadMarket();
+  const live = MKT && MKT.phase && SESSION_LIVE[MKT.phase];
+  const gap = live || !MKT ? MKT_TICK : MKT_TICK_OFF;
+  _mktTimer = setTimeout(mktLoop, gap);
+}
+_mktTimer = setTimeout(mktLoop, 800);
+const _btnMkt = $("btnMktRefresh");
+if (_btnMkt) {
+  _btnMkt.onclick = async () => {
+    const old = _btnMkt.textContent;
+    _btnMkt.disabled = true; _btnMkt.textContent = "统计中…";
+    try {
+      const j = await api("/api/market/overview?force=1");
+      MKT = j.overview || MKT;
+      renderMktPanel();
+      toast("大盘概览已刷新", "ok");
+    } catch (e) { toast("刷新失败：" + e.message, "err"); }
+    finally { _btnMkt.disabled = false; _btnMkt.textContent = old; }
+  };
+}
+
+const _btnMidday = $("btnMidday");
+if (_btnMidday) {
+  _btnMidday.onclick = async () => {
+    const old = _btnMidday.textContent;
+    _btnMidday.disabled = true; _btnMidday.textContent = "诊断中…";
+    try {
+      const j = await api("/api/intraday/run", { method: "POST", body: {} });
+      INTRA_MID = j.intraday || INTRA_MID;
+      renderMidday();
+      toast(j.message || "午间诊断已更新", j.ok === false ? "err" : "ok");
+    } catch (e) { toast("诊断失败：" + e.message, "err"); }
+    finally { _btnMidday.disabled = false; _btnMidday.textContent = old; }
+  };
+}
+const _btnMiddaySettle = $("btnMiddaySettle");
+if (_btnMiddaySettle) {
+  _btnMiddaySettle.onclick = async () => {
+    const old = _btnMiddaySettle.textContent;
+    _btnMiddaySettle.disabled = true; _btnMiddaySettle.textContent = "结算中…";
+    try {
+      const j = await api("/api/intraday/settle", { method: "POST", body: {} });
+      INTRA_MID = j.intraday || INTRA_MID;
+      renderMidday();
+      toast(j.message || "结算完成", j.ok === false ? "err" : "ok");
+    } catch (e) { toast("结算失败：" + e.message, "err"); }
+    finally { _btnMiddaySettle.disabled = false; _btnMiddaySettle.textContent = old; }
+  };
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadMarket();   // 切回页面立刻刷新，不等下一个周期
+});
 
 loadAll(false);
 
@@ -949,8 +1658,14 @@ function renderNews() {
   // 顶部分数卡片
   $("nAutoScore").textContent = (NEWS.auto_score >= 0 ? "+" : "") + NEWS.auto_score;
   $("nAutoScore").className = "v " + (NEWS.auto_score > 0 ? "up" : NEWS.auto_score < 0 ? "down" : "");
+  const sc = NEWS.auto_scope || {};
+  const scopeTxt = sc.n_in_scope != null
+    ? "；口径：重点事件 " + sc.n_in_scope + " 条 / 词典 " + (sc.dict_mode === "off" ? "关" : sc.dict_mode)
+      + (sc.scale ? " / 刻度 " + sc.scale : "")
+      + (NEWS.auto_net_src === "cache" ? "（与引擎同一份口径）" : "（按当前口径近似重算）")
+    : "";
   $("nAutoSub").textContent = "净情绪 " + (NEWS.auto_net >= 0 ? "+" : "") + NEWS.auto_net +
-    " × 振幅 " + NEWS.cfg.news_amp + "（词典自动，供参考）";
+    "（分 = 净情绪 × 振幅 " + NEWS.cfg.news_amp + "）" + scopeTxt;
   const h = NEWS.human;
   if (h) {
     $("nHumanScore").textContent = (h.score >= 0 ? "+" : "") + h.score;
@@ -963,15 +1678,23 @@ function renderNews() {
   }
   const by = NEWS.labels.by_label || {};
   const doneN = NEWS.done || 0;
-  $("nProgress").textContent = "待确认 " + (NEWS.todo || 0) + " 条 · AI 已采纳 " +
-    (NEWS.ai_accepted || 0) + " 条 · 已打标 " + doneN + " / 共 " + NEWS.feed_count + " 条";
+  // 人工额度：**一共 50 次**（用户 2026-09-16 明确要求），这里显示的是全系统当日总用量
+  // 注意变量名是 ST（`let ST = null` 存 /api/state），不是 STATE —— 写成 STATE 会
+  // 抛 ReferenceError，把整个 renderNews() 打断，表现成"消息数据加载失败"。
+  const iv = (ST && ST.interventions) || null;
+  const budgetTxt = iv && iv.budget
+    ? `人工介入 ${iv.used}/${iv.budget} 次（剩 ${iv.left}）· AI 自动完成 ${iv.auto} 次`
+    : "";
+  $("nProgress").innerHTML = "待抽检 " + (NEWS.todo || 0) + " 条 · AI 已采纳 " +
+    (NEWS.ai_accepted || 0) + " 条 · 已打标 " + doneN + " / 共 " + NEWS.feed_count + " 条" +
+    (budgetTxt ? `<div class="mut small">${budgetTxt}</div>` : "");
   const isToday = NEWS.date === todayStrLocal();
   let capNote = "";
   if (isToday && (NEWS.review_extra || 0) > 0) {
-    capNote = " · 另有 " + NEWS.review_extra + " 条中性超出 50 条人工额度，默认按 AI 中性处理";
+    capNote = " · 另有 " + NEWS.review_extra + " 条低把握度消息未列入抽检（AI 判断仍生效）";
   }
   $("nScoreNote").innerHTML = "消息权重 " + Math.round(NEWS.cfg.news_weight * 100) +
-    "% · 学习词 " + NEWS.learned_total + " 个 · " +
+    "% · 术语样本 " + NEWS.learned_total + " 个 · " +
     (NEWS.demo ? "" : NEWS.feed_count ? NEWS.feed_count + " 条已入库" : "尚未拉取") +
     (isToday ? capNote : "（非今日，只读历史）");
   renderNewsFeed();
@@ -986,10 +1709,28 @@ function renderNewsFeed() {
     if (NF === "all") return true;
     if (NF === "unrated") return it.needs_review && !it.user_label; // 待你确认(≤50)
     if (NF === "auto") return it.ai_decided && !it.user_label;      // AI 已采纳
+    if (NF === "imp") return !!it.important;                        // 🔴重要电报
+    if (NF === "archived") return it.auto_handled && !it.user_label; // 📦AI自动归档
     return it.user_label ? it.user_label === NF : it.auto_label === NF;
   });
+  // 同模板归并统计：代表条上显示“🔁同类×N”（N 含自身）
+  const dupN = {};
+  (NEWS.feed || []).forEach(x => {
+    if (x.dup_of) dupN[x.dup_of] = (dupN[x.dup_of] || 0) + 1;
+  });
+  const autoKindTxt = {
+    premium: "产品风险提示·AI判中性",
+    disclosure: "例行持股披露·AI判中性",
+    dup: "同模板批量·AI已归并",
+    // 纯指数/商品报价：不是新闻，是行情播报。已被市场实时定价，不构成利好利空，
+    // 因此整类自动归档（用户 2026-09-16：「只是单纯的消息面，根本不构成利空利好」）。
+    broadcast: "行情播报·纯报价已归档",
+  };
   const shownNote = NF === "unrated" ? "（AI 没把握、待你确认）"
-    : NF === "auto" ? "（AI 已直接采纳，可展开覆盖）" : "";
+    : NF === "auto" ? "（AI 已直接采纳，可展开覆盖）"
+    : NF === "archived" ? `（例行披露/同模板/行情播报已自动归档${
+        NEWS.broadcast_archived ? "，其中行情播报 " + NEWS.broadcast_archived + " 条" : ""
+      }）` : "";
   $("nFeedCount").textContent = "共 " + NEWS.feed_count + " 条，当前显示 " + items.length +
     " 条" + shownNote;
   const box = $("nFeedList");
@@ -1007,23 +1748,27 @@ function renderNewsFeed() {
     const funds = (it.funds_links || []).map(f => `<span class="pill">→ ${esc(f.name)}</span>`).join("");
     const unlabeled = !it.user_label;
     const autoOnly = unlabeled && !it.needs_review;  // AI 已采纳 / 中性超额：默认不打标
+    const dupPill = dupN[it.id]
+      ? `<span class="pill" style="color:#8d99ae" title="该模板其余同类消息已被 AI 自动归并归档（不占人工额度）；仅保留本条代表供你一眼复核、有异议可打标">🔁同类 ${dupN[it.id] + 1} 条·已归并</span>`
+      : "";
     const buttons = Object.keys(LABEL_TXT).map(k =>
       `<button class="ratebtn ${it.user_label === k ? (k.includes("bull") ? "on-bull" : k.includes("bear") ? "on-bear" : k === "neutral" ? "on-neutral" : "") : ""}"
         data-rate="${it.id}" data-label="${k}">${LABEL_TXT[k]}</button>`).join("");
     const flagPill = it.needs_review
       ? `<span class="pill" style="color:#f7b731;border-color:rgba(247,183,49,.6)">待你确认</span>`
       : (autoOnly && it.auto_handled
-          ? `<span class="pill" style="color:#8d99ae;border-color:rgba(141,153,174,.6)" title="场内溢价/临时停牌属基金产品层面提示，不代表 A 股大盘方向">产品风险提示·AI判中性</span>`
+          ? `<span class="pill" style="color:#8d99ae;border-color:rgba(141,153,174,.6)" title="例行披露/同模板批量消息：只是个股或产品层面的趋势记录，无大盘方向信息，AI 已自动判中性归档，不占用你的人工复核额度">${autoKindTxt[it.auto_kind] || "AI判中性·已归档"}</span>`
           : (autoOnly && it.ai_decided
               ? `<span class="pill" style="color:#4adf9a;border-color:rgba(33,191,115,.5)">AI 已自动采纳${autoSign}${autoTxt}</span>`
               : (autoOnly && unlabeled ? `<span class="pill" style="color:#8d99ae">超出额度·按AI中性</span>` : "")));
     return `<div class="feed-item lab-${lab === "irrelevant" ? "neutral" : lab}">
       <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap">
+        ${it.important ? `<span class="pill" style="color:#ff7d80;border-color:rgba(255,77,79,.55)" title="重要电报：命中突发/重要/涨跌停等关键词，方向情绪已加权×1.25">🔴重要</span>` : ""}
         <span class="pill">${esc(it.time || "")} ${esc(it.source || "")}</span>
         <span class="pill" style="${it.auto_label === "bull" ? "color:#ff7d80;border-color:rgba(255,77,79,.5)" :
             it.auto_label === "bear" ? "color:#4adf9a;border-color:rgba(33,191,115,.5)" : ""}">
           自动:${autoTxt}${autoSign}</span>
-        ${flagPill}${sectors}${funds}
+        ${flagPill}${dupPill}${sectors}${funds}
       </div>
       <div style="margin:4px 0; font-weight:600; line-height:1.5">${esc(it.title || "")}</div>
       ${it.text && it.text !== it.title ? `<div class="mut small clamp2" style="margin-bottom:4px">${esc(it.text)}</div>` : ""}
@@ -1096,27 +1841,216 @@ function renderCalibration() {
   }
   const evs = Object.entries(rep.by_event || {}).sort((a, b) => b[1].n - a[1].n);
   if (!box) return;
+  let html = "";
   if (!evs.length) {
-    box.innerHTML = `<div class="mut">暂无已结算样本：每个交易日 20:30 自动结算后这里会出表；
-      财联社历史电报可用 <code>python app.py cls-import --file x.json --date 2026-09-08</code> 导入以提前积累。</div>`;
-    return;
-  }
-  box.innerHTML = `<table style="width:100%"><thead><tr>
+    html += `<div class="mut">逐日积累样本：暂无已结算样本（每交易日 20:30 自动结算后出表）。
+      想立刻有样本量，用下方「🔄 历史回填」把财联社历史电报补进来。</div>`;
+  } else {
+    html += `<table style="width:100%"><thead><tr>
     <th>事件类型</th><th>样本</th><th>利多/利空/中性</th><th>命中</th><th>命中率</th><th>平均次日涨跌</th>
     </tr></thead><tbody>` + evs.map(([k, a]) => {
-    const rate = a.hit_rate;
-    const cls = rate == null ? "" : (rate >= 0.55 ? "up" : rate <= 0.45 ? "down" : "");
-    return `<tr>
+      const rate = a.hit_rate;
+      const cls = rate == null ? "" : (rate >= 0.55 ? "up" : rate <= 0.45 ? "down" : "");
+      return `<tr>
       <td>${esc(CAL_EVN[k] || k)}</td>
       <td>${a.n}</td>
       <td class="mut small">${a.bull || 0}/${a.bear || 0}/${a.neutral || 0}</td>
       <td>${a.hit || 0}</td>
       <td class="${cls}">${rate == null ? "—" : fmtPct0(rate)}</td>
       <td>${fmtPctS(a.avg_chg)}</td></tr>`;
-  }).join("") + `</tbody></table>
-  <div class="mut small" style="margin-top:6px">命中口径：利多→次日沪深300 上涨 &gt;0.3%、利空→下跌 &gt;0.3%、中性→|涨跌|≤0.3%；样本越多越可信，命中率明显偏离 50% 的方向可据此微调语义规则强度。</div>`;
+    }).join("") + `</tbody></table>
+  <div class="mut small" style="margin-top:6px">命中口径：利多→次日沪深300 上涨 &gt;0.3%、利空→下跌 &gt;0.3%、中性→|涨跌|≤0.3%；样本越多越可信。</div>`;
+  }
+  html += calibBackfillHtml();
+  box.innerHTML = html;
+  renderEventModel();
 }
+
+/* 历史回填校准（财联社电报时间游标回溯；与线上同口径打分 → 次日涨跌命中率） */
+function calibBackfillHtml() {
+  const back = CAL.hist_backfill || {};
+  const dd = back.day_level || {};
+  let h = `<h4 style="margin:16px 0 4px">📜 历史回填校准（财联社电报 · 时间游标回溯任意历史）</h4>`;
+  if (CAL.backfill_running) {
+    h += `<div class="mut small">⏳ ${esc(CAL.backfill_msg || "抓取中…")}（页面每 5 秒自动刷新）</div>`;
+  }
+  if (!back.generated_at) {
+    h += `<div class="mut small">尚无回填报告：点右上「🔄 历史回填」运行一次（逐页回溯、带缓存可断点续跑，约 2–5 分钟）；
+      命令行等价：<code>python app.py news-calibrate --days 20</code>。<br>
+      说明：<code>/nodeapi/telegraphList</code> 该接口已 <b>404 下线</b>；可用通道是
+      <code>/v1/roll/get_roll_list</code> 的 <code>refresh_type=1 + last_time</code> 时间游标（实测可回溯 1 年）。</div>`;
+    return h;
+  }
+  const evs = back.events || [];
+  h += `<div class="mut small">窗口 ${esc(back.window.from)} → ${esc(back.window.to)}
+    （${dd.n} 个交易日，电报 ${(back.data || {}).telegrams} 条，翻页 ${(back.data || {}).pages}）
+    ｜上涨日占比 ${fmtPct0(back.baseline_up_rate)}
+    ｜日级方向命中率 ${dd.hit_rate == null ? "—" : fmtPct0(dd.hit_rate)}
+    ｜IC ${dd.ic == null ? "—" : dd.ic}
+    ｜净情绪口径 ${esc(back.net_mode || "—")}（刻度 ${back.net_scale ?? "—"}）</div>`;
+  h += `<table style="width:100%; margin-top:6px"><thead><tr>
+    <th>事件类型</th><th>方向</th><th>样本</th><th>命中率</th><th>基准</th>
+    <th>增量</th><th>次日均值</th><th>p</th><th>建议倍数</th></tr></thead><tbody>`;
+  h += evs.map(e => {
+    const cls = e.edge == null ? "" : (e.edge >= 0.05 ? "up" : e.edge <= -0.05 ? "down" : "");
+    return `<tr>
+      <td>${esc(e.event_cn || e.event)}</td>
+      <td>${e.label === "bull" ? "利多" : "利空"}</td>
+      <td>${e.n}</td>
+      <td class="${cls}">${fmtPct0(e.hit_rate)}</td>
+      <td class="mut">${fmtPct0(e.baseline)}</td>
+      <td class="${cls}">${e.edge >= 0 ? "+" : ""}${(e.edge * 100).toFixed(1)}%</td>
+      <td>${fmtPctS(e.avg_ret_pct / 100)}</td>
+      <td class="mut">${e.p}</td>
+      <td>${e.suggest_mult == null ? "—" : e.suggest_mult}</td></tr>`;
+  }).join("") + `</tbody></table>
+    <div class="mut small" style="margin-top:6px">
+    增量 = 命中率 − 基准（利多基准=窗口上涨日占比，利空基准=1−上涨日占比）：<b>只有正增量</b>才说明该事件方向有
+    超出市场漂移的额外预测力（下跌窗口里只看命中率会把所有利多信号都判成"差"）。
+    建议倍数经 n/(n+20) 收缩、样本 ≥5 才给；默认只报告，
+    <code>config.json → strategy.event_calibration=true</code> 时才自动参与自动打分。</div>`;
+  const drows = back.day_rows || [];
+  if (drows.length) {
+    h += `<details style="margin-top:10px"><summary class="mut small" style="cursor:pointer">逐日明细（净情绪原始强度 / 合成后分数 / 次日涨跌 / 是否命中）</summary>`
+      + `<div style="max-height:260px; overflow:auto; margin-top:6px"><table style="width:100%"><thead><tr>
+        <th>交易日</th><th>电报</th><th>利多/利空</th><th>Σ强度</th><th>净情绪</th><th>分数</th><th>次日涨跌</th><th>命中</th>
+        </tr></thead><tbody>`
+      + drows.map(r => `<tr>
+        <td>${esc(r.date)}</td>
+        <td class="mut">${r.n_news ?? "—"}</td>
+        <td class="mut small">${(r.labels || {}).bull || 0}/${(r.labels || {}).bear || 0}</td>
+        <td class="mut">${r.net_raw ?? "—"}</td>
+        <td>${r.net == null ? "—" : r.net.toFixed(2)}</td>
+        <td class="${r.score > 0 ? "up" : r.score < 0 ? "down" : ""}">${r.score}</td>
+        <td class="${r.next_ret_pct >= 0 ? "up" : "down"}">${r.next_ret_pct == null ? "—" : (r.next_ret_pct >= 0 ? "+" : "") + r.next_ret_pct + "%"}</td>
+        <td>${r.hit == null ? "—" : (r.hit ? "✅" : "❌")}</td></tr>`).join("")
+      + `</tbody></table></div>
+      <div class="mut small" style="margin-top:4px">旧口径下这些天的「净情绪」会全部等于 8.00（Σ强度天天顶格，合成后恒为 +25 = 零区分度）；现按刻度换算后才有高低之分。</div></details>`;
+  }
+  return h;
+}
+/* ---------- 事件→次日方向：样本外模型面板 ---------- */
+function renderEventModel() {
+  const sub = $("modelSub"), box = $("modelBox");
+  if (!box) return;
+  const m = CAL.event_model || {};
+  if (CAL.model_running && sub) {
+    sub.innerHTML = `⏳ ${esc(CAL.model_msg || "运行中…")}（页面每 5 秒自动刷新）`;
+  }
+  if (!m.metrics || !m.metrics.n) {
+    if (sub && !CAL.model_running) sub.textContent = "尚无结果";
+    return;
+  }
+  const met = m.metrics, pol = m.policy || {}, sel = m.selection || {};
+  const pct = v => (v == null ? "—" : fmtPct0(v));
+  if (sub) {
+    sub.innerHTML = `窗口 ${esc(m.window.from)} → ${esc(m.window.to)}（${m.window.days} 个交易日，样本外 ${met.n} 天）`
+      + `｜基线：上涨日 ${fmtPct0(met.up_rate)}、多数类 ${fmtPct0(met.baseline_majority)}｜Brier ${met.brier}`;
+  }
+  let h = `<div class="mut small">命中口径：次日 |涨跌| ≥ 0.3% 的样本里方向判对（噪声日不进分母）。
+    整体出手 ${met.taken} 天（覆盖 ${fmtPct0(met.coverage)}）命中 <b>${pct(met.acc)}</b>
+    （基线 ${pct(met.baseline_majority)}，增量 <b class="${(met.edge_vs_baseline || 0) >= 0 ? "up" : "down"}">${met.edge_vs_baseline == null ? "—" : ((met.edge_vs_baseline >= 0 ? "+" : "") + (met.edge_vs_baseline * 100).toFixed(1) + "pp")}</b>）；
+    其中波动 ≥0.5% 的日子 <b>${pct(met.acc_big_move)}</b>（${met.n_big_move} 天）。</div>`;
+  if (m.backtest) {
+    const bt = m.backtest;
+    h += `<div class="mut small" style="margin-top:4px">策略（按信号做多/空仓，费 5bp）：
+      净值 <b>${bt.nav}</b> vs 买入持有 <b>${bt.buy_hold}</b>
+      <b class="${bt.win_vs_bh ? "up" : "down"}">${bt.win_vs_bh ? "跑赢基线" : "跑输基线"}</b>
+      （超额 ${bt.excess >= 0 ? "+" : ""}${(bt.excess * 100).toFixed(1)}%，调仓 ${bt.switches} 次，最大回撤 ${pct(bt.max_drawdown)}）</div>`;
+  }
+  if ((m.per_year || []).length) {
+    h += `<table style="width:100%; margin-top:8px"><thead><tr>
+      <th>年份</th><th>天数</th><th>命中率</th><th>基线</th><th>增量</th><th>策略净值</th><th>买入持有</th>
+      </tr></thead><tbody>` + m.per_year.map(y => `<tr>
+      <td>${esc(y.year)}</td><td>${y.days}</td>
+      <td class="${(y.edge || 0) > 0 ? "up" : (y.edge || 0) < 0 ? "down" : ""}">${pct(y.acc)}</td>
+      <td class="mut">${pct(y.baseline)}</td>
+      <td class="${(y.edge || 0) > 0 ? "up" : (y.edge || 0) < 0 ? "down" : ""}">${y.edge == null ? "—" : ((y.edge >= 0 ? "+" : "") + (y.edge * 100).toFixed(1) + "pp")}</td>
+      <td>${y.bt_nav == null ? "—" : y.bt_nav}</td>
+      <td class="mut">${y.bt_bh == null ? "—" : y.bt_bh}</td></tr>`).join("") + `</tbody></table>`;
+  }
+  h += `<table style="width:100%; margin-top:8px"><thead><tr>
+    <th>选择性出手（阈值只在训练窗内定）</th><th>出手</th><th>含波动日</th><th>命中</th><th>命中率</th><th>覆盖率</th>
+    </tr></thead><tbody>`;
+  Object.keys(pol.targets || {}).sort((a, b) => a - b).forEach(k => {
+    const c = pol.targets[k];
+    const cls = c.acc == null ? "" : (c.acc >= 0.7 ? "up" : c.acc < 0.5 ? "down" : "");
+    h += `<tr><td>覆盖目标 ${Math.round((c.target || 0) * 100)}%</td><td>${c.taken}</td>
+      <td>${c.movers}</td><td>${c.hits}</td><td class="${cls}"><b>${pct(c.acc)}</b></td>
+      <td class="mut">${fmtPct0(c.coverage)}</td></tr>`;
+  });
+  h += `</tbody></table>`;
+  if (sel.ok) {
+    h += `<div class="mut small" style="margin-top:8px">选择期（${sel.select_period.days} 天）挑中：
+      feature_set=<b>${esc(sel.selected.feature_set || "market")}</b>、l2=${sel.selected.l2}、
+      每 ${sel.selected.refit_every} 天重训、half_life=${sel.selected.half_life ?? 0}；
+      留出期 ${esc(sel.holdout_period.from)} → ${esc(sel.holdout_period.to)}（${sel.holdout_period.days} 天，<b>仅用于报告</b>）：
+      命中 <b class="${(sel.holdout.edge || 0) >= 0 ? "up" : "down"}">${pct(sel.holdout.acc)}</b>
+      vs 基线 ${pct(sel.holdout.baseline)}（增量 ${sel.holdout.edge == null ? "—" : ((sel.holdout.edge >= 0 ? "+" : "") + (sel.holdout.edge * 100).toFixed(1) + "pp")}）
+      ｜策略 <b class="${sel.holdout.win ? "up" : "down"}">${sel.holdout.win ? "跑赢" : "跑输"}</b>
+      买入持有（${sel.holdout.bt_nav} vs ${sel.holdout.bt_bh}）</div>`;
+  }
+  const bk = met.buckets || [];
+  if (bk.length) {
+    h += `<details style="margin-top:8px"><summary class="mut small" style="cursor:pointer">把握度分档明细</summary>
+      <table style="width:100%"><thead><tr><th>|p−0.5|</th><th>样本</th><th>含波动日</th><th>命中率</th></tr></thead><tbody>`
+      + bk.map(b => `<tr><td>${esc(b.edge)}</td><td>${b.n}</td><td>${b.movers}</td><td>${pct(b.acc)}</td></tr>`).join("")
+      + `</tbody></table></details>`;
+  }
+  if (m.latest) {
+    h += `<div class="mut small" style="margin-top:8px">最近一日样本外预测：${esc(m.latest.date)} → ${esc(m.latest.next)}
+      上涨概率 <b>${fmtPct0(m.latest.p_up)}</b>（实际次日 ${fmtPctS(m.latest.actual_next_ret)}）</div>`;
+  }
+  box.innerHTML = h;
+}
+
+$("btnRunModel").onclick = async () => {
+  const btn = $("btnRunModel");
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "建模中…";
+  try {
+    const r = await api("/api/event-model/run", {
+      method: "POST", body: { days: 400, select: true, warmup: 60 } });
+    if (!r.ok) throw new Error(r.message || "启动失败");
+    toast(r.message, "ok");
+    let n = 0;
+    const t = setInterval(async () => {
+      await loadCalibration(true);
+      if (!(CAL && CAL.model_running) || ++n > 120) {
+        clearInterval(t);
+        btn.disabled = false; btn.textContent = old;
+        toast((CAL && CAL.model_msg) || "建模结束", "ok");
+      }
+    }, 5000);
+  } catch (e) {
+    toast("建模失败：" + e.message, "err");
+    btn.disabled = false; btn.textContent = old;
+  }
+};
+
 $("btnRefreshCalib").onclick = () => { loadCalibration(false); toast("已刷新校准数据", "ok"); };
+$("btnBackfillCalib").onclick = async () => {
+  const btn = $("btnBackfillCalib");
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "抓取中…";
+  try {
+    const r = await api("/api/calibration/backfill", { method: "POST", body: { days: 20 } });
+    if (!r.ok) throw new Error(r.message || "启动失败");
+    toast(r.message, "ok");
+    let n = 0;
+    const t = setInterval(async () => {
+      await loadCalibration(true);
+      if (!(CAL && CAL.backfill_running) || ++n > 120) {
+        clearInterval(t);
+        btn.disabled = false; btn.textContent = old;
+        toast((CAL && CAL.backfill_msg) || "历史回填结束", "ok");
+      }
+    }, 5000);
+  } catch (e) {
+    toast("历史回填失败：" + e.message, "err");
+    btn.disabled = false; btn.textContent = old;
+  }
+};
 $("btnExtendHist").onclick = async () => {
   const btn = $("btnExtendHist");
   btn.disabled = true;
@@ -1146,13 +2080,16 @@ $("btnNewsPull").onclick = async () => {
 
 /* ---------- AI 自动方向研判 & 命中率（只读，不需要用户输入） ---------- */
 function renderNewsDir() {
-  const d = NEWS.direction;
+  const d = NEWS.direction_today || NEWS.direction;
+  // 跨天/跨周末：今日还没跑研判时，显示“上一个交易日收盘给出、针对下一个交易日”的判断
+  const pend = !NEWS.direction && !!NEWS.direction_today;
   const dirTxt = (dd) => dd.dir === "bull" ? "看多" : dd.dir === "bear" ? "看空" : "中性";
+  const forTxt = (dd) => esc(dd.for_date || dd.date || "");
   $("nDirCur").innerHTML = d
     ? (d.resolved_date
-        ? `今日 AI 判断：<b>${dirTxt(d)}</b>（信心 ${Math.round((d.confidence || 1) * 100)}%）——已于 ${esc(d.resolved_date)} 结算：${d.hit ? '<span class="up">命中 ✓</span>' : '<span class="down">未中 ✗</span>'}（当日 ${fmtPct(d.next_chg)}）`
-        : `今日 AI 判断：<b>${dirTxt(d)}</b>（信心 ${Math.round((d.confidence || 1) * 100)}%，评分自动生成），等待下一交易日收盘后自动结算`)
-    : "今日尚未运行研判（运行“立即运行今日研判”后自动记录 AI 方向）";
+        ? `${pend ? "AI 次日判断（针对 " + forTxt(d) + "）" : "今日 AI 判断"}：<b>${dirTxt(d)}</b>（信心 ${Math.round((d.confidence || 1) * 100)}%）——已于 ${esc(d.resolved_date)} 结算：${d.hit ? '<span class="up">命中 ✓</span>' : '<span class="down">未中 ✗</span>'}（当日 ${fmtPct(d.next_chg)}）`
+        : `${pend ? "AI 次日判断（针对 " + forTxt(d) + "，由 " + esc(d.made_on || "") + " 收盘给出）" : "今日 AI 判断"}：<b>${dirTxt(d)}</b>（信心 ${Math.round((d.confidence || 1) * 100)}%${pend ? "" : "，评分自动生成"}），等待 ${forTxt(d)} 收盘后自动结算`)
+    : "今日尚未运行研判（运行“立即运行今日研判”后自动记录 AI 方向；也可在命令行跑 python app.py direction-check 单独补记/结算）";
   const s = NEWS.stats || {};
   const rate = s.hit_rate == null ? "—" : fmtPct0(s.hit_rate);
   $("nDirStats").innerHTML = `AI 方向判断命中率：<b>${rate}</b>（命中 ${s.hit || 0} / 结算 ${s.total || 0}）` +
@@ -1167,32 +2104,50 @@ function renderNewsDir() {
     : `<div class="mut">暂无结算记录</div>`;
 }
 
-/* ---------- 学习词典 & 搜索补全 ---------- */
+/* ---------- 学习成果（术语 × 市场实际反应）与搜索补全 ---------- */
+/* 旧版把学习结果显示成「自动驾驶 利多 34 次」——那是把方向**永久钉在词上**。
+   现在展示的是：含该术语的消息**次日市场实际怎么走**（样本数 / 上涨比例 / 平均涨跌），
+   并且明确标注"方向由上下文与 AI 共同决定，不由词决定"。 */
 function renderNewsLearn() {
-  $("nLearnSub").textContent = `（${NEWS.learned_total} 个新词生效）`;
+  $("nLearnSub").textContent = `（${NEWS.learned_total} 个术语有市场反应样本）`;
   $("nBaseLex").textContent = `${NEWS.base_lexicon?.bull || 0} 利好 / ${NEWS.base_lexicon?.bear || 0} 利空`;
   const w = NEWS.learned || [];
-  $("nLearned").innerHTML = w.length ? w.map(x => {
-    const dir = x.bull > x.bear ? "up" : "down";
-    const txt = x.bull > x.bear ? "利多" : "利空";
-    const hit = x.bull + x.bear;
-    return `<span class="wlearn">${esc(x.word)}<span class="dir ${dir}">${txt} ${hit}次</span></span>`;
-  }).join("") : `<div class="mut">还没有你教会的新词。到上方给消息打标（利好/利空），几小时后自动打分就会带上这些词。</div>`;
+  if (!w.length) {
+    $("nLearned").innerHTML =
+      `<div class="mut">还没有积累出足够样本。学习口径是「术语 × 市场实际反应」：
+       含某术语的消息**次日大盘实际涨跌**，满 ${NEWS.min_samples || 5} 个样本才展示；
+       方向由 AI 与上下文（结果动词/否定转折/作用对象）共同判断，不由词单独决定。</div>`;
+    return;
+  }
+  $("nLearned").innerHTML = w.slice(0, 60).map(x => {
+    const n = x.docs || x.n || 0;
+    const hit = x.hit;
+    if (hit == null) return `<span class="wlearn">${esc(x.word)}<span class="dir">样本 ${n}</span></span>`;
+    const chg = x.chg == null ? "" : ` ${x.chg > 0 ? "+" : ""}${(x.chg).toFixed(2)}%`;
+    const cls = hit >= 0.55 ? "up" : (hit <= 0.45 ? "down" : "mut");
+    const by = x.by_regime && Object.keys(x.by_regime).length
+      ? " · " + Object.entries(x.by_regime).map(([k, v]) =>
+        `${k}${(v.hit * 100).toFixed(0)}%(${v.n})`).join(" ") : "";
+    return `<span class="wlearn">${esc(x.word)}<span class="dir ${cls}"
+      title="含该术语的消息，次日上涨比例 ${(hit * 100).toFixed(0)}%，样本 ${n}${by}">
+      次日涨 ${(hit * 100).toFixed(0)}%${chg} · ${n}样本</span></span>`;
+  }).join("");
 }
 function renderNewsQueue() {
   const open = NEWS.queue_open || [];
   const all = NEWS.queue || [];
   const last = NEWS.last_merge || {};
   $("nQueueHint").textContent =
-    "机制：在线消息不足/缺失时自动写 data/search_queue.json → 让 DSH 助手用本地搜索把结果放回 data/search_results.json → 点上方【合并搜索回填结果】（或下次运行研判自动合并）。" +
-    (NEWS.results_ready ? " 【检测到 data/search_results.json 有待合并内容】" : "");
+    "机制：在线消息不足/缺失时自动写 data/search_queue.json → 让 DSH 助手用本地搜索把结果放回 data/search_results.json → " +
+    "**系统在下次研判前自动合并，无需你点按钮**（如需立刻合并可点上方【合并搜索回填结果】）。" +
+    (NEWS.results_ready ? " 【检测到 data/search_results.json 有待合并内容，下次研判会自动合并】" : "");
   $("nQueue").innerHTML =
     `<div class="mut small">待补清单 ${open.length} 条 / 累计 ${all.length} 条` +
-    (last.run_at ? ` · 最近合并 ${esc(last.run_at || "")}：${esc(last.note || "")}` : "") + `</div>` +
+    (last.run_at ? ` · 最近自动合并 ${esc(last.run_at || "")}：${esc(last.note || "")}` : "") + `</div>` +
     (open.length ? open.map(x => `<div class="feed-item"><b>${esc(x.kind)}</b> · ${esc(x.date)}
         <div class="mut small">${esc(x.query)}</div>
         <div class="mut small">理由：${esc(x.reason)}</div></div>`).join("")
-      : `<div class="mut">当前无信息缺口；如仍想补充，可点【登记搜索补全清单】。</div>`);
+      : `<div class="mut">当前无需人工介入（没有信息缺口，也没有等你确认的事项）。</div>`);
 }
 $("btnSearchExport").onclick = async () => {
   try {
@@ -1210,3 +2165,176 @@ $("btnSearchImport").onclick = async () => {
     renderNews();
   } catch (e) { toast("合并失败：" + e.message, "err"); }
 };
+
+/* ============================================================
+   情绪复盘（微观结构：涨停情绪脉搏，借鉴 Cailianpress-Feishu-Bot）
+   ============================================================ */
+let MICRO = null;
+
+async function loadMicroTab(force) {
+  const note = $("microNote");
+  if (note) note.textContent = force ? "重抓今日数据中…" : "加载中…";
+  try {
+    if (force) await api("/api/micro/refresh", { method: "POST", body: {} });
+    const j = await api("/api/micro");
+    MICRO = j.micro;
+    renderMicro();
+  } catch (e) {
+    if (note) note.textContent = "加载失败：" + e.message;
+  }
+}
+
+function microKpi(k, v, sub, cls) {
+  return `<div class="card"><div class="k">${k}</div>` +
+    `<div class="v small ${cls || ""}">${v}</div>` +
+    `<div class="sub">${sub || ""}</div></div>`;
+}
+const microPct = (v) => v == null ? "—" : (v * 100).toFixed(1) + "%";
+
+function renderMicro() {
+  if (!MICRO) return;
+  const note = $("microNote");
+  if (!MICRO.enabled) {
+    $("microKpis").innerHTML = "";
+    $("microLines").innerHTML = "该维度已关闭（strategy.micro_enable=false）。";
+    return;
+  }
+  if (!MICRO.ok) {
+    $("microKpis").innerHTML = "";
+    $("microLines").innerHTML = "微观结构数据暂不可用：" + esc(MICRO.message || "接口失败") +
+      "（已自动降级，不影响研判其余维度；收盘后重试或点【↻ 重抓今日】）。";
+    if (note) note.textContent = "今日暂不可用（自动降级，不影响研判主流程）";
+    return;
+  }
+  const s = MICRO.snap || {}, q = s.qualitative || {};
+  const sc = s.score;
+  if (note) {
+    note.innerHTML = `交易日 <b>${esc(s.date || "")}</b> · 情绪分 ` +
+      `<b class="${sc >= 0 ? "up" : "down"}">${sc == null ? "—" : (sc >= 0 ? "+" : "") + sc}</b>` +
+      `（进合成评分权重 ${Math.round((MICRO.weight || 0) * 100)}% · 限幅 ±${MICRO.cap || 0}）` +
+      (MICRO.asof ? ` · ${esc(MICRO.asof)}` : "") +
+      (MICRO.stale ? " · 缓存兜底" : "") +
+      ((s.errors || MICRO.errors || []).length ? " · 部分源：" + esc((s.errors || MICRO.errors).join("；")) : "");
+  }
+  $("microKpis").innerHTML = [
+    microKpi("涨停 / 跌停", `${s.zt ?? "—"} / ${s.dt ?? "—"}`,
+      `赚钱效应：${esc(q.promotion_effect || "—")} · 亏钱效应：${esc(q.loss_effect || "—")}`,
+      (s.zt ?? 0) >= (s.dt ?? 0) ? "up" : "down"),
+    microKpi("昨日晋级率", microPct(s.promotion_rate),
+      s.promotion == null ? "接入首日（逐日累积后可用）" : `${esc(s.prev_date || "昨日")}涨停今日晋级 ${s.promotion} 只`,
+      s.promotion_rate > 0.3 ? "up" : (s.promotion_rate != null && s.promotion_rate < 0.15 ? "down" : "")),
+    microKpi("炸板率", microPct(s.zb_rate), `炸板 ${s.zb ?? "—"} 只 · <30% 封板质量好`,
+      s.zb_rate != null && s.zb_rate > 0.5 ? "down" : ""),
+    microKpi("涨跌广度", microPct(s.rise_ratio),
+      `涨 ${s.rise ?? "—"} : 跌 ${s.fall ?? "—"} · 成交 ${esc((s.turnover || {}).now || "—")}`,
+      s.rise_ratio > 0.6 ? "up" : (s.rise_ratio != null && s.rise_ratio < 0.4 ? "down" : "")),
+    microKpi("连板梯队", s.max_board >= 2 ? `${s.max_board}板高标` : "断档",
+      `情绪定性：${esc(q.mood || "—")}`, s.max_board >= 3 ? "up" : ""),
+  ].join("");
+  $("microLines").innerHTML = (MICRO.lines || []).map(l => `<div>${esc(l)}</div>`).join("");
+  const lad = s.ladder || {};
+  const ks = Object.keys(lad).sort((a, b) => Number(b) - Number(a));
+  let html = "";
+  if (ks.length) {
+    html += "<div><b>梯队（非ST）</b><br>" + ks.map(k =>
+      `<span class="pill">${k}板</span> ` + esc((lad[k] || []).join("、"))).join("<br>") + "</div>";
+  } else {
+    html += "<div>今日无 ≥2 板连板梯队（情绪断档，短线冰点特征）。</div>";
+  }
+  if ((s.top_concepts || []).length) {
+    html += "<div style='margin-top:10px'><b>主流题材</b>（涨停家数）：" +
+      s.top_concepts.map(c => `<span class="pill">${esc(c[0])}·${c[1]}家</span>`).join("") + "</div>";
+  }
+  if ((s.persistent || []).length) {
+    html += `<div style="margin-top:8px"><b>持续主线</b>：${esc(s.persistent.join("、"))}` +
+      ((s.new_entries || []).length ? ` · <b>新题材</b>：${esc(s.new_entries.join("、"))}` : "") + `</div>`;
+  }
+  $("microLadder").innerHTML = html;
+  renderHeatNote();
+  whenEcharts(drawMicroCharts);
+}
+
+/* 题材热度“更新到哪天 / 怎么算的”说明行（无图表时也可见） */
+function renderHeatNote() {
+  const hn = $("heatNote");
+  if (!hn) return;
+  const meta = (MICRO && MICRO.theme_heat_meta) || {};
+  if (!meta.date) { hn.textContent = "暂无题材数据（收盘后生成）"; return; }
+  const days = (meta.days || []).map(d => String(d).slice(5)).join("/");
+  const arrow = meta.trend === "up" ? " ↑升温" : meta.trend === "down" ? " ↓降温" : " →持平";
+  hn.innerHTML = `更新至 <b>${esc(meta.date)}</b>（基于 ${esc(days)} 涨停快照，权重 ${(meta.decay || []).join("/")}）`
+    + (meta.market_heat != null
+      ? ` ｜ 市场整体热度 <b>${meta.market_heat}</b>（涨停 ${meta.zt_latest ?? "—"} 家${meta.zt_prev != null ? "，前一日 " + meta.zt_prev : ""}${meta.trend ? arrow : ""}）` : "")
+    + ((meta.ignitions || []).length ? ` ｜ 🔥 今日点火：${esc(meta.ignitions.join("、"))}` : "");
+}
+
+function drawMicroCharts() {
+  if (!MICRO || !MICRO.ok || !echartsOK()) return;
+  const H = MICRO.history || [];
+  const c = chartInit("chMicroTrend");
+  if (c) {
+    const common = axisCommon();
+    c.setOption(Object.assign(common, {
+      xAxis: { type: "category", data: H.map(h => (h.date || "").slice(5)),
+        axisLabel: { color: "#8d99ae" } },
+      yAxis: [
+        { type: "value", min: -100, max: 100, name: "情绪分",
+          axisLabel: { color: "#8d99ae" }, splitLine: { lineStyle: { color: "#1c2740" } } },
+        { type: "value", name: "家数", axisLabel: { color: "#8d99ae" },
+          splitLine: { show: false } }],
+      series: [
+        { name: "情绪分", type: "bar", data: H.map(h => ({
+            value: h.score ?? 0,
+            itemStyle: { color: (h.score ?? 0) >= 0 ? "#ff4d4f" : "#2ab871" } })) },
+        { name: "涨停家数", type: "line", yAxisIndex: 1, data: H.map(h => h.zt),
+          smooth: true, lineStyle: { color: "#f7b731" }, itemStyle: { color: "#f7b731" } },
+        { name: "跌停家数", type: "line", yAxisIndex: 1, data: H.map(h => h.dt),
+          smooth: true, lineStyle: { color: "#2ab871" }, itemStyle: { color: "#2ab871" } }],
+    }), true);
+    c.resize();
+  }
+  const heat = MICRO.theme_heat || {};
+  const meta = MICRO.theme_heat_meta || {};
+  const rows = (meta.rows || []).slice(0, 10).reverse();   // 横向条形：自下而上递增
+  const ent = rows.length
+    ? rows.map(r => ({ name: (r.ignition ? "🔥" : "") + r.theme, heat: r.heat, r }))
+    : Object.entries(heat).sort((a, b) => a[1] - b[1]).slice(-10)
+        .map(e => ({ name: e[0], heat: e[1], r: null }));
+  const hn = $("heatNote");
+  if (hn) renderHeatNote();
+  const ctx = MICRO.sentiment_context || {};
+  if (ctx.days && $("microTrendNote")) {
+    $("microTrendNote").innerHTML = `近 ${ctx.days} 个交易日情绪分布（缓存保留，辅助决策）：当前 <b>${ctx.latest}</b> 分，处于 <b>${Math.round((ctx.pct_rank || 0) * 100)}%</b> 分位（<b>${esc(ctx.label || "中性")}</b>）`
+      + `｜均值 ${ctx.mean}（区间 ${ctx.min}~${ctx.max}）`
+      + `｜5 日趋势 ${ctx.trend == null ? "—" : (ctx.trend > 0 ? "+" : "") + ctx.trend}`
+      + `｜偏热(≥40) ${ctx.hot_days} 天、偏冷(≤−40) ${ctx.cold_days} 天`;
+  }
+  const c2 = chartInit("chMicroHeat");
+  if (c2) {
+    c2.setOption({
+      tooltip: { trigger: "axis", formatter: ps => {
+          const p = ps[0];
+          const r = (ent[p.dataIndex] || {}).r;
+          if (!r) return esc(p.name) + " 热度 " + p.value;
+          return `<b>${esc(r.theme)}</b> 热度 ${r.heat}<br/>`
+            + `近${r.shares.length}日占比：${(r.shares || []).map(v => (v * 100).toFixed(1) + "%").join(" → ")}<br/>`
+            + `涨停家数：${(r.values || []).join(" → ")}<br/>`
+            + `出现 ${r.days_seen}/${r.shares.length} 天`
+            + (r.ignition ? " ｜ 🔥 今日点火（新热点）" : "");
+        } },
+      grid: { left: 100, right: 46, top: 12, bottom: 26 },
+      xAxis: { type: "value", max: 1, axisLabel: { color: "#8d99ae" },
+        splitLine: { lineStyle: { color: "#1c2740" } } },
+      yAxis: { type: "category", data: ent.map(e => e.name),
+        axisLabel: { color: "#cfd6e6" } },
+      series: [{ type: "bar", data: ent.map(e => e.heat),
+        itemStyle: { color: (p) => (ent[p.dataIndex] && ent[p.dataIndex].r
+          && ent[p.dataIndex].r.ignition) ? "#f7b731" : "#ff6b6b" },
+        label: { show: true, position: "right", color: "#8d99ae",
+          formatter: (p) => Number(p.value).toFixed(2) } }],
+    }, true);
+    c2.resize();
+  }
+}
+
+$("btnMicroRefresh").onclick = () => loadMicroTab(true);

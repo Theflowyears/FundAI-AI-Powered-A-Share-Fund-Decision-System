@@ -3,6 +3,31 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+# 构建产物（发行包走 GitHub Release 附件，不进版本库）
+build/
+dist/
+
+# 个人运行时数据：**永远不要提交**（真实持仓、订单、参数备份、本机用量）
+data/fund200.db
+data/fund200.db.bak*
+data/live.db
+data/screening.db
+data/pool_state.json
+data/config_backups/
+data/api_usage.json
+data/cache/study_usage.json
+data/*.log
+
+# 大体量本地数据（十年电报库等，按 README 的 fetch-history / news-fetch-db 自行重建）
+data/cls_history.db
+data/cls_history.db-wal
+data/cls_history.db-shm
+
+# 发布暂存副本 / 临时快照
+fundai-github/
+_snap_home/
+_test_tmp/
+
 # Runtime artifacts (regenerated / noisy)
 data/server_autostart.log
 *.tmp

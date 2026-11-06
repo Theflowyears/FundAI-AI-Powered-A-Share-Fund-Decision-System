@@ -6,6 +6,7 @@
 2. 「凭参数名猜语义」把死键写成活键（或反之）→ 本文件用源码 grep 双向核对。
 """
 import json
+import os
 import re
 import unittest
 from pathlib import Path
@@ -27,10 +28,11 @@ EXPECTED_DEAD = {"market.benchmarks", "account.start_date", "account.end_date",
 # 配置里还没有、但代码有默认值的键（可手工加进 config.json）
 EXPECTED_EXTRA = {
     "market.benchmarks", "strategy.event_calibration", "strategy.micro_fee_proxy",
-    "strategy.news_llm_batch", "strategy.risk_overlay_neutral",
+    "strategy.risk_overlay_neutral",
     "strategy.risk_overlay_off", "strategy.risk_overlay_off_th",
     "strategy.risk_overlay_on_th", "strategy.snap_backfill_days", "web.port",
     # 注意：strategy.replay_news 已在 config.json 里 → 不属于 extra
+    # 注意：strategy.news_llm_batch 自 2026-09-16 起已写入 config.json → 也不属于 extra
 }
 
 
@@ -130,7 +132,38 @@ class CoverageTest(unittest.TestCase):
         self.assertGreater(cov["params"], 100)
 
     def test_defaults_match_config_file(self):
-        cfg = settings.load_config()          # 与 param_docs 默认值同源（含 _deep_default）
+        """每条参数文档里的 `default` 必须与**当前配置里的实际值**一致。
+
+        两个必须说明的坑
+        ----------------
+        1. **不能吃缓存**：`settings.load_config()` 是进程级共享缓存，某些用例
+           （如改临时配置、构造变体 cfgs）会把它换成另一份内容；而
+           `param_docs.PARAMS[*]["default"]` 是 `param_docs` **导入时**同步的快照。
+           两边一旦来自不同时刻，就会出现"0.9 != 0.95"这种**与被测代码无关**的
+           假失败。所以这里先用 `param_docs.refresh_defaults()` 按当前配置重新同步，
+           再比对——消除跨时间误判，同时保留"配置里有值就必须被收录"的强校验。
+        2. **容忍"配置里没有这个键"**：`config.json` 是用户自己的调参产物
+           （发布版里还是精简示例），而 `default` 是作者按自己那份配置标注的推荐值。
+           发布包缺 `strategy.equity_base_fixed` 之类不是文档写错了，是发布配置更精简，
+           因此只在键确实存在时比对。
+        3. **必须断言的是"这一份 config.json"**：`settings.CONFIG_PATH` 会随
+           `FUNDAI_HOME` 变（隔离环境下指向运行期自动生成的配置），
+           与被断言的 `<项目根>/config.json` 可能**根本不是同一个文件**。
+           两者不是同一份时直接跳过——否则会拿 A 文件的默认值去比 B 文件的值。
+        """
+        cfg_path = ROOT / "config.json"
+        if not cfg_path.exists():
+            self.skipTest("本目录没有 config.json（发布快照不含运行期配置）")
+        if os.path.realpath(str(settings.CONFIG_PATH)) != os.path.realpath(
+                str(cfg_path)):
+            self.skipTest(
+                "FUNDAI_HOME 重定向了配置（生效配置={}，被断言的 config.json={}）"
+                "——两者不同源，跳过比对".format(settings.CONFIG_PATH, cfg_path))
+        cfg = settings.reload_config()        # 强制读盘，与 param_docs 导入同源
+        param_docs.refresh_defaults(cfg)      # 让 default 反映**当前**配置（见 docstring）
+        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        raw_defaults = param_docs._defaults_from_config(raw)
+        compared = missing = 0
         for p in param_docs.PARAMS:
             node = cfg
             ok = True
@@ -142,9 +175,20 @@ class CoverageTest(unittest.TestCase):
             if ok:
                 self.assertEqual(p["default"], node,
                                  "{} 的 default 与配置不一致".format(p["key"]))
+                compared += 1
+            elif p["key"] in raw_defaults:
+                # 配置里**有**这个键，但 param_docs 认为没有 → 同步漏了，必须报
+                self.fail("{} 在 config.json 里有值，但 default 是 None"
+                          "（param_docs 导入时同步失败？）".format(p["key"]))
             else:
                 self.assertIsNone(p["default"],
                                   "{} 配置里没有，default 应为 None".format(p["key"]))
+                missing += 1
+        # 防止"配置缺键"把整条断言架空虚化：本地完整配置必须覆盖几乎所有文档参数
+        self.assertGreater(compared, 0, "配置里一个文档参数都没有，用例失去意义")
+        if missing > len(param_docs.PARAMS) // 3:
+            self.skipTest("config.json 是精简示例（{} 键未收录、仅比对 {} 键）".format(
+                missing, compared))
 
 
 class ToggleTest(unittest.TestCase):

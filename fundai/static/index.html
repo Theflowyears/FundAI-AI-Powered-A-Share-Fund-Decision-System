@@ -28,6 +28,24 @@
 <main>
   <!-- ============ 仪表盘 ============ -->
   <section id="tab-dash" class="page on">
+    <!-- 午间复盘：**放在最顶部**（用户 2026-09-16 要求"提到显眼位置"）。
+         它回答的是"下午怎么办"，比大盘概览更该先看到，所以置于所有面板之上。 -->
+    <div class="panel midday-hero" id="middayPanel">
+      <div class="hero-row">
+        <div class="hero-left">
+          <span class="hero-tag">🌤 午间复盘</span>
+          <span class="badge" id="middayBadge">—</span>
+          <span class="hero-view" id="middayView">加载中…</span>
+        </div>
+        <div class="hero-right">
+          <button id="btnMidday" class="btn primary small" title="立刻用当前行情生成午间复盘（随时可跑）">⚡ 立即诊断</button>
+          <button id="btnMiddaySettle" class="btn small" title="用「收盘 vs 11:30」结算今日午间观点的命中">✓ 结算</button>
+        </div>
+      </div>
+      <div class="hero-meta" id="middayMeta"></div>
+      <div class="hero-body" id="middayCard"></div>
+    </div>
+
     <div class="panel" id="srcAlertPanel" style="display:none">
       <h3>⚠️ 数据源降级提示 <span class="badge" id="srcAlertBadge">降级中</span></h3>
       <div class="mut small" id="srcAlertNote"></div>
@@ -35,6 +53,21 @@
     </div>
     <div class="idx-strip" id="idxStrip">
       <div class="mut" style="padding:8px 4px">大盘指数加载中…</div>
+    </div>
+
+    <div class="panel" id="mktPanel">
+      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        🌐 大盘概览
+        <span class="mut small" style="font-weight:normal" id="mktAsOf">—</span>
+        <span class="spacer"></span>
+        <button id="btnMktRefresh" class="btn small" title="立即重新统计全市场涨跌家数（约 1~2 秒）">↻ 刷新</button>
+      </h3>
+      <div class="mkt-grid" id="mktGrid"></div>
+      <div class="panel" style="margin-top:8px;padding:8px 10px;border:1px dashed var(--line,#333)">
+        <div class="mut small" style="margin-bottom:4px">基准指数今日分时（5 分钟粒度）
+          <span id="mktIntraNote"></span></div>
+        <div id="chIntraday" class="chart xs"></div>
+      </div>
     </div>
 
     <div class="cards">
@@ -154,12 +187,14 @@
   <!-- ============ 消息与进化（可视化人工筛选） ============ -->
   <section id="tab-news" class="page">
     <div class="panel">
-      <h3>📰 每日消息广域筛选 · 让算法学会你的判断</h3>
+      <h3>📰 每日消息广域筛选 · AI 为主判断，你只做抽检</h3>
       <div class="mut small" style="margin:4px 0 10px">
-        每天收盘后：先点【拉取今日消息】（东财+新浪+财联社电报多源，逐条自动打标并与备选基金联动；🔴=重要电报）→
-        AI 已直接采纳方向明确的利好/利空；<b>机构持股比例权益披露、ETF 溢价提示、以及同模板批量刷屏的中性消息，AI 已自动判中性归档、不占人工额度</b>（可在“📦AI归档”筛选查看）；你只需在下方<b>“待确认”里挑 AI 没把握（中性）的最多 50 条</b>
-        复核打标（利好/利空/中性/重大利好/重大利空/与市场无关）→
-        算法把打标结果<b>学成完整金融术语词</b>，此后自动打分自动带上你教会的词。
+        每天收盘后：先点【拉取今日消息】（东财+新浪+财联社电报多源）→
+        <b>AI 逐条判断方向与把握度，方向直接计入评分</b>；机构披露、ETF 溢价提示、同模板刷屏等
+        已自动归档（可在“📦AI归档”查看）。<b>判断不依赖"词表把某个词固定成利好/利空"</b>：
+        上下文（结果动词、否定转折、作用对象是大盘还是个股）与**该术语历史上市场的真实反应**共同决定方向，
+        AI 再把当日行情状态（是否已大涨/大跌）纳入考虑——所以同一个词在不同行情下可以得到相反方向。
+        <b>你每天的人工额度一共 50 次</b>，只花在 AI 没把握的低把握度消息上，其余全部自动采纳。
         <b>次日大盘方向由 AI 自动研判并自检命中率，不需要你来预测。</b>
       </div>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
@@ -180,9 +215,12 @@
         <div class="card"><div class="k">人工消息分（你的打标）</div>
           <div class="v gold-txt" id="nHumanScore">—</div>
           <div class="sub" id="nLabels">尚未打标</div></div>
-        <div class="card"><div class="k">今日打标进度</div>
+        <div class="card"><div class="k">今日人工介入额度</div>
+          <div class="v" id="nBudget">—</div>
+          <div class="sub" id="nBudgetSub">全系统合计上限 50 次/天</div></div>
+        <div class="card"><div class="k">今日待抽检</div>
           <div class="v small" id="nProgress">—</div>
-          <div class="sub">确认 ≤50 条最不确定的消息即可，其余自动采用 AI 判断</div></div>
+          <div class="sub">只列 AI 把握度最低的消息；其余由 AI 直接采纳</div></div>
       </div>
     </div>
 
@@ -198,8 +236,11 @@
         <div id="nDirHist"></div>
       </div>
       <div class="panel">
-        <h3>🧠 学习词典（打标后自动进化） <span class="mut small" id="nLearnSub"></span></h3>
-        <div class="mut small" style="margin:2px 0 8px">基础词典 <span id="nBaseLex">—</span> 词 + 你教会它的新词。下面仅列出“方向一致性足够、且新出现”的词，自动打分时会叠加生效。</div>
+        <h3>🧠 学习成果（术语 × 市场实际反应） <span class="mut small" id="nLearnSub"></span></h3>
+        <div class="mut small" style="margin:2px 0 8px">基础词典 <span id="nBaseLex">—</span> 词。
+          <b>下面展示的是"含该术语的消息，次日市场实际怎么走"</b>（样本数 / 次日上涨比例），
+          而不是"这个词是利好还是利空"——方向由 AI 与上下文共同判断，学习只负责提供
+          <b>市场反应先验</b>；样本不足的术语不给方向。</div>
         <div id="nLearned" style="max-height:220px; overflow:auto"></div>
         <h3 style="margin-top:10px">🔍 信息缺口 & DSH 本地搜索补全</h3>
         <div class="mut small" style="margin:2px 0 6px" id="nQueueHint"></div>

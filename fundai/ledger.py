@@ -100,6 +100,11 @@ class Ledger:
         cols = [r["name"] for r in self.conn.execute("PRAGMA table_info(orders)")]
         if "submit_at" not in cols:
             self.conn.execute("ALTER TABLE orders ADD COLUMN submit_at TEXT")
+        # 兼容旧库：为 records 补 calc 列（当日评分计算明细 JSON，透明化用）
+        rcols = [r["name"] for r in self.conn.execute("PRAGMA table_info(records)")]
+        if "calc" not in rcols:
+            self.conn.execute(
+                "ALTER TABLE records ADD COLUMN calc TEXT DEFAULT ''")
 
     def close(self):
         self.conn.close()
@@ -407,20 +412,26 @@ class Ledger:
 
     # ---------------- 研判记录 ----------------
     def add_record(self, date_s, score, chg, index_close, view_title, source,
-                   analysis, decision):
+                   analysis, decision, calc=""):
         with self.lock:
             with self.conn:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO records(date,market_score,"
-                    "market_chg,index_close,view_title,source,analysis,decision) "
-                    "VALUES(?,?,?,?,?,?,?,?)",
+                    "market_chg,index_close,view_title,source,analysis,decision,"
+                    "calc) VALUES(?,?,?,?,?,?,?,?,?)",
                     (date_s, int(score), (None if chg is None else util.r4(chg)),
                      util.r2(index_close), view_title, source, analysis,
-                     decision))
+                     decision, str(calc or "")))
 
     def has_record(self, date_s):
         return self.conn.execute(
             "SELECT 1 FROM records WHERE date=?", (date_s,)).fetchone() is not None
+
+    def get_record(self, date_s):
+        """取某日研判记录（dict 或 None）。供“AI 次日方向”重放/补跑时复用当日口径。"""
+        r = self.conn.execute(
+            "SELECT * FROM records WHERE date=?", (str(date_s)[:10],)).fetchone()
+        return dict(r) if r else None
 
     def get_records(self, limit=400):
         rows = self.conn.execute(
@@ -450,6 +461,26 @@ class Ledger:
         r = self.conn.execute(
             "SELECT * FROM snapshots ORDER BY date DESC LIMIT 1").fetchone()
         return dict(r) if r else None
+
+    # ---------------- 历史重建（资产曲线自愈回填用） ----------------
+    def seed_cash(self):
+        """资金守恒基线现金（老库启用流水前的基线）。"""
+        try:
+            return float(self.meta("seed_cash") or self.cash())
+        except (TypeError, ValueError):
+            return self.cash()
+
+    def cashflow_rows(self):
+        """全部成交现金流水 [(code, action, date, shares, cash_delta, fee)]。"""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT code, action, date, shares, cash_delta, fee FROM executed "
+            "ORDER BY date, id").fetchall()]
+
+    def lot_rows(self):
+        """现存份额批次 [(fund_code, buy_date, shares)]（shares 为当前剩余）。"""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT fund_code, buy_date, shares FROM lots "
+            "WHERE shares>0 ORDER BY buy_date, id").fetchall()]
 
     def has_snapshot(self, date_s):
         return self.conn.execute(

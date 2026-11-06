@@ -73,7 +73,7 @@ PARAMS = [
         "dead": False},
     {
         "key": "strategy.equity_base_fixed", "label": "固定权益基准",
-        "desc": "equity_base_mode=fixed 时的权益目标仓位（代码里再夹到 0~1）。默认 0.70 = 七成仓。调大→仓位更满、收益弹性与回撤同时放大；调小→更保守但牛市涨得少。注意它还会被 equity_hard_cap（0.80）与风控路径二次压制。",
+        "desc": "equity_base_mode=fixed 时的权益目标仓位（代码里再夹到 0~1）。**当前默认 0.80**（2026-10 最新数据：80/80 档全历史 +172.3%/DD22.2；90% 档 DD30.4% 越过 25% 约束，见 README §25）。调大→仓位更满、收益弹性与回撤同时放大；注意它还会被 equity_hard_cap（0.80）与风控路径二次压制。",
         "kind": "number",
         "options": None, "min": 0.0, "max": 1.0, "step": 0.01, "unit": "比例",
         "group": "仓位与上限", "order": 20, "advanced": False,
@@ -118,7 +118,7 @@ PARAMS = [
         "dead": False},
     {
         "key": "strategy.equity_hard_cap", "label": "权益硬上限",
-        "desc": "全局权益仓位天花板：所有路径（固定/评分/调整带/风险过滤/牛市覆盖）算完后都会再 min 一次它，防御冷却与组合风控则压得更低。默认 0.80 = 永不满仓。调高→仓位上限更松，调低→系统性更保守。",
+        "desc": "全局权益仓位天花板：所有路径（固定/评分/调整带/风险过滤/牛市覆盖）算完后都会再 min 一次它，防御冷却与组合风控则压得更低。默认 0.80 = 永不满仓（2026-10 与基准 0.80 配套定稿，见 README §25）；调到 0.95 属于更激进档，最新数据下 DD 会越过 25%。调高→仓位上限更松，调低→系统性更保守。",
         "kind": "number",
         "options": None, "min": 0.0, "max": 1.0, "step": 0.01, "unit": "比例",
         "group": "仓位与上限", "order": 70, "advanced": False,
@@ -131,7 +131,7 @@ PARAMS = [
         "kind": "number",
         "options": None, "min": 0.0, "max": 0.30, "step": 0.05, "unit": "比例",
         "group": "仓位与上限", "order": 80, "advanced": False,
-        "default": None,
+        "default": 0.0,
         "effect": "开启并调大→仓位会随制度/情绪摆动，温和上行时更满（并放宽轮动门槛）、极端波动时更空。",
         "dead": False},
     {
@@ -252,6 +252,77 @@ PARAMS = [
         "group": "加减仓与轮动", "order": 90, "advanced": True,
         "default": None,
         "effect": "调高→钱更集中在动量最强的标的上（收益弹性与集中度风险同时上升）；调低→更接近等权分散。",
+        "dead": False},
+    {
+        "key": "strategy.portfolio_method", "label": "组合构建方法",
+        "desc": "决定入选的 top_n 基金之间怎么分钱。legacy=旧口径（momentum_weight 动量加权+等权混合，逐位保持旧行为）；equal=等权；inv_vol=逆波动（波动越低权重越高）；min_var=收缩协方差的最小方差组合。equal/inv_vol/min_var 均由 fundai/portfolio.py 执行，并统一套 max_fund_weight / max_theme_weight / 起购额约束；数据不足自动回退等权，组合异常回退 legacy。",
+        "kind": "enum",
+        "options": [{"value": "legacy", "label": "旧动量加权（兼容）"},
+                    {"value": "equal", "label": "等权"},
+                    {"value": "inv_vol", "label": "逆波动"},
+                    {"value": "min_var", "label": "最小方差"},
+                    {"value": "adaptive", "label": "制度自适应"}],
+        "min": None, "max": None, "step": None, "unit": None,
+        "group": "加减仓与轮动", "order": 92, "advanced": False,
+        "default": None,
+        "effect": "等权最稳、逆波动偏向低波动基金、min_var 更集中低相关资产；adaptive 在均线多头且评分≥adaptive_bull_score 时用旧动量加权、其余状态用等权；切回 legacy 可完全恢复旧行为。",
+        "dead": False},
+    {
+        "key": "strategy.adaptive_bull_score", "label": "自适应·趋势上行评分线",
+        "desc": "portfolio_method=adaptive 时用于判定“趋势上行”：context.ma_align 为真且市场评分 ≥ 该值 → 用 legacy 动量加权，否则用等权。默认 25（与 analysis.VIEWS 的谨慎看多下限一致）。",
+        "kind": "number",
+        "options": None, "min": -100.0, "max": 100.0, "step": 1.0, "unit": "分",
+        "group": "加减仓与轮动", "order": 97, "advanced": True,
+        "default": None,
+        "effect": "调高→更少进入动量加权（更分散）；调低→更容易切换到集中动量。",
+        "dead": False},
+    {
+        "key": "strategy.adaptive_signal", "label": "自适应·趋势信号",
+        "desc": "portfolio_method=adaptive 时用于判定趋势上行的信号：ma_align=收盘>MA20>MA60>MA200（确认慢、牛市初期滞后）；mom20=沪深300 20 日动量>0（更快、震荡市更易反复）；either=两者任一成立。判定还需评分≥adaptive_bull_score。",
+        "kind": "enum",
+        "options": [{"value": "ma_align", "label": "均线多头（默认）"},
+                    {"value": "mom20", "label": "20日动量>0"},
+                    {"value": "either", "label": "任一成立"}],
+        "min": None, "max": None, "step": None, "unit": None,
+        "group": "加减仓与轮动", "order": 98, "advanced": True,
+        "default": None,
+        "effect": "mom20/either 切换更早、牛市初期捕获更好，但震荡市可能反复切换；ma_align 更稳、切换更慢。",
+        "dead": False},
+    {
+        "key": "strategy.max_fund_weight", "label": "单基金权重上限",
+        "desc": "组合层约束：任一入选基金的目标权重不得超过该值（n=1/2 时自动放宽到 1/n，避免无解）。只在 portfolio_method != legacy 时生效。",
+        "kind": "number",
+        "options": None, "min": 0.05, "max": 1.0, "step": 0.05, "unit": "比例",
+        "group": "加减仓与轮动", "order": 93, "advanced": True,
+        "default": None,
+        "effect": "调低→更分散、单一基金风险更小，但可能削弱最强主题的收益弹性；调高→更集中。",
+        "dead": False},
+    {
+        "key": "strategy.max_theme_weight", "label": "同主题权重上限",
+        "desc": "组合层约束：同一主题（strategy.THEME_GROUPS 归类）的基金权重合计不得超过该值；若候选全部同一主题导致无解，会放宽该约束并在决策文案里说明。只在 portfolio_method != legacy 时生效。",
+        "kind": "number",
+        "options": None, "min": 0.1, "max": 1.0, "step": 0.05, "unit": "比例",
+        "group": "加减仓与轮动", "order": 94, "advanced": True,
+        "default": None,
+        "effect": "调低→板块更分散、单一风口回撤更小；调高→允许押注同一主线。",
+        "dead": False},
+    {
+        "key": "strategy.overheat_rsi", "label": "RSI 过热线",
+        "desc": "选基过滤：RSI14 高于该值的基金本日不进入买入候选（0=关闭）。默认关闭；是否写入默认值由四窗口 decision_study 决定，避免为单一窗口过拟合。",
+        "kind": "number",
+        "options": None, "min": 0.0, "max": 100.0, "step": 1.0, "unit": "RSI",
+        "group": "加减仓与轮动", "order": 95, "advanced": True,
+        "default": None,
+        "effect": "调低→更早回避过热标的，可能错过主升段；调高或 0→不按 RSI 过滤。",
+        "dead": False},
+    {
+        "key": "strategy.overheat_mom5", "label": "近5日涨幅过热线",
+        "desc": "选基过滤：近 5 日涨幅高于该值的基金本日不进入买入候选（0=关闭）。用于避免在短线加速末端追高；默认关闭，待四窗口验证。",
+        "kind": "number",
+        "options": None, "min": 0.0, "max": 1.0, "step": 0.01, "unit": "比例",
+        "group": "加减仓与轮动", "order": 96, "advanced": True,
+        "default": None,
+        "effect": "调低→更严格地拒绝短线暴涨标的，换手与追高风险下降；调高或 0→基本不过滤。",
         "dead": False},
     {
         "key": "strategy.min_momentum", "label": "绝对动量门槛",
@@ -584,39 +655,57 @@ PARAMS = [
         "dead": False},
     {
         "key": "strategy.news_llm_enable", "label": "LLM 逐条定级",
-        "desc": "用大模型对「词典兜底桶」的消息逐条判定利好/利空/中性（只处理这部分、带磁盘缓存、失败回退词典标签），判为中性/无关的消息会被一票否决（llm_dropped）。",
+        "desc": "用大模型对消息逐条判定方向（利好/利空/中性/无关）。**2026-09-16 起 AI 为主**：覆盖面从「词典兜底桶」扩大到整条流（按 🔴重要 → |本地强度| → 主题命中排序取 news_llm_cap 条），并把**当日市场状态**喂给模型（同一条消息在「已大涨」与「连续下跌」下方向可以相反）；带磁盘缓存（同 id + 同状态不重复计费），失败自动回退本地上下文判断。",
         "kind": "bool",
         "options": None, "min": None, "max": None, "step": None, "unit": None,
         "group": "消息面与动态权重", "order": 130, "advanced": False,
         "default": None,
-        "effect": "关闭→降噪能力下降、词典兜底噪声（或按 news_dict_mode 完全排除）；开启会消耗 LLM 调用配额。",
+        "effect": "关闭→全部走本地上下文判断（结果动词/对象层级/否定转折/术语市场反应）；开启会消耗 LLM 调用配额但方向更可靠。",
         "dead": False},
     {
         "key": "strategy.news_llm_cap", "label": "LLM 每日上限",
-        "desc": "每天最多送去逐条定级的消息条数（默认 120；消息更少时以实际条数为准，llm_news 内部还有单批最大 30 条的约束）。",
+        "desc": "每天最多送去 AI 判定的消息条数（默认 300；llm_news 内部还有单批最大 30 条的约束）。超出的消息**不会没判断**，而是走本地上下文兜底。",
         "kind": "int",
-        "options": None, "min": 0, "max": 1000, "step": 10, "unit": "条",
+        "options": None, "min": 0, "max": 2000, "step": 10, "unit": "条",
         "group": "消息面与动态权重", "order": 140, "advanced": True,
         "default": None,
-        "effect": "调大→更多消息被 AI 定级（更准但 token 成本/耗时上升）；调小到 0 → LLM 定级实际上不处理任何消息。",
+        "effect": "调大→更多消息由 AI 定级（更准但 token 成本/耗时上升）；调小到 0 → AI 实际不处理任何消息，全部回退本地判断。",
         "dead": False},
     {
         "key": "strategy.news_llm_contribute", "label": "LLM 影响净情绪",
-        "desc": "默认 false：LLM 只做降噪（否决不相关消息），其方向标签不计入净情绪；设为 true 后 LLM 定级过的消息会按其方向参与净情绪（apply_labels 的 contribute 参数）。",
+        "desc": "默认 **true（2026-09-16 起）**：AI 的方向**直接计入消息分**。旧默认是 false，只让 LLM 做一票否决（判中性/无关才生效）——实测那样等于「AI 判了也不影响评分」。设为 false 可退回历史口径做对照回测。",
         "kind": "bool",
         "options": None, "min": None, "max": None, "step": None, "unit": None,
         "group": "消息面与动态权重", "order": 150, "advanced": True,
         "default": None,
-        "effect": "开启→消息分几乎完全由模型口径决定（与现有实证口径不一致，慎开）。",
+        "effect": "开启→消息分由 AI 与上下文共同决定（当前推荐）；关闭→AI 只做降噪，方向仍由本地算法定。",
         "dead": False},
     {
         "key": "strategy.news_llm_batch", "label": "LLM 单批条数",
-        "desc": "LLM 逐条定级时每次请求携带的消息条数（默认 20，代码再夹到 1~30）。注意 news.py 调用 label_items 时没有传 batch，函数默认值 20 先生效，因此该键只在调用方显式传 0/None 时才会被读到——改它通常看不到行为变化。",
+        "desc": "LLM 逐条定级时每次请求携带的消息条数（默认 20，代码再夹到 1~30）。请求次数 ≈ 待判条数 ÷ 该值，因此调大能明显减少 API 调用次数与总耗时。",
         "kind": "int",
         "options": None, "min": 1, "max": 30, "step": 1, "unit": "条",
         "group": "消息面与动态权重", "order": 145, "advanced": True,
         "default": None,
-        "effect": "正常调用路径下无实际影响；若改代码让它生效，调大批次会减少请求次数但单次 token 更多。",
+        "effect": "调大→请求更少更快，但单次 prompt 更长（个别超长批次被模型截断的风险略升）。",
+        "dead": False},
+    {
+        "key": "strategy.news_low_conf_threshold", "label": "低把握度抽检阈值",
+        "desc": "把握度低于该值的消息才列入「待抽检」交给人工复核（默认 0.45）。**用户要求每天人工介入一共 ≤50 次**，所以只有把握度最低的一小撮会占用人工额度，其余由 AI 直接采纳。",
+        "kind": "number",
+        "options": None, "min": 0.0, "max": 1.0, "step": 0.05, "unit": "把握度",
+        "group": "消息面与动态权重", "order": 155, "advanced": True,
+        "default": None,
+        "effect": "调高→更多消息请你复核（更贴你的判断但费人工额度）；调低→几乎全自动，人工只处理最没把握的。",
+        "dead": False},
+    {
+        "key": "strategy.context_min_samples", "label": "术语反应最少样本",
+        "desc": "术语统计要积累多少个**真实市场反应样本**（含该术语的消息 + 次日沪深300实际涨跌）才允许给方向，默认 5。样本不足时该术语不参与判断（宁缺勿滥），这是「不靠词频单一定方向」的关键闸门。",
+        "kind": "int",
+        "options": None, "min": 1, "max": 200, "step": 1, "unit": "个",
+        "group": "消息面与动态权重", "order": 165, "advanced": True,
+        "default": None,
+        "effect": "调低→更多术语参与判断但噪声更大；调高→只信证据充分的术语，方向更保守。",
         "dead": False},
     {
         "key": "strategy.event_calibration", "label": "事件命中率校准",
@@ -647,6 +736,24 @@ PARAMS = [
         "dead": False},
 
     # ================= 风控止损与冷却 =================
+    {
+        "key": "strategy.risk.fund_stop_loss_enable", "label": "单只止损开关",
+        "desc": "控制 strategy.plan 是否执行「单只浮亏≤fund_stop_loss_pct→清仓」这条基金级规则。关闭后指数级均线减仓、峰值回撤冷却、组合止损仍然生效；只是不再按单只浮亏自动卖。2026-10 全历史+四窗口实测：高仓位组合关闭它可显著减少无效换手（见 README §25），因此默认值按证据设为 false；想回到旧行为把它打开即可。",
+        "kind": "bool",
+        "options": None, "min": None, "max": None, "step": None, "unit": None,
+        "group": "风控止损与冷却", "order": 5, "advanced": False,
+        "default": None,
+        "effect": "开启→单只深亏会被清仓，降低单基金尾部风险但增加换手；关闭→让组合级风控负责，避免震荡市被反复扫出。",
+        "dead": False},
+    {
+        "key": "strategy.risk.fund_take_profit_enable", "label": "单只止盈开关",
+        "desc": "控制 strategy.plan 是否执行「浮盈≥10% 卖一半 / ≥25% 清仓」这两条基金级止盈规则。关闭后不再因为单只浮盈达标而主动减仓，趋势中的赢家可以继续跑；组合级回撤/均线风控仍生效。实测关闭与等权分配同时使用时，全历史收益与回撤都更优（README §25）。",
+        "kind": "bool",
+        "options": None, "min": None, "max": None, "step": None, "unit": None,
+        "group": "风控止损与冷却", "order": 6, "advanced": False,
+        "default": None,
+        "effect": "开启→更早落袋、回撤更可控；关闭→减少对趋势的截断，但单只浮盈回吐会更大。",
+        "dead": False},
     {
         "key": "strategy.risk.fund_stop_loss_pct", "label": "单只止损线",
         "desc": "单只基金浮亏 ≤ 该值（默认 −8%，settings 校验必须为负）→ 清仓止损；持仓不足 min_hold_days 且不允许提前卖时，只提示「解锁后立即执行」。",
@@ -1034,8 +1141,20 @@ PARAMS = [
         "effect": "换源会改变数据来源与限频行为：zhitu 受每日配额限制、akshare 依赖本地库是否可用、eastmoney 全走公开接口（可能被限流但无配额）。",
         "dead": False},
     {
+        "key": "strategy.liquidity_reserve_yuan", "label": "流动性储备（元）",
+        "desc": "**至少保留这么多现金**，其余资金都允许投出去（做利润优先）。"
+                "例：本金 1000、填 200 → 权益上限约 80%，任何路径都不会把现金压到 200 元以下，"
+                "需要补仓/调仓时手里始终有一笔钱。填 0 = 不保留（允许打满，由 equity_hard_cap 兜底）。",
+        "kind": "number",
+        "options": None, "min": 0, "max": 100000, "step": 50, "unit": "元",
+        "group": "仓位与上限", "order": 5, "advanced": False,
+        "default": 0,
+        "effect": "调大→现金留存更多、可用仓位更低（更保守）；调小→更接近满仓（收益与回撤同步放大）。"
+                  "注意它是**绝对金额**，与本金挂钩：本金变了记得一起调整。",
+        "dead": False},
+    {
         "key": "data.zhitu_daily_limit", "label": "智兔每日配额",
-        "desc": "智兔接口每日允许的调用次数上限（默认 200），用来做配额节流：配额不足时动态筛选与备选池刷新会直接跳过并提示「明天再筛选」。",
+        "desc": "**只有智兔有每日调用上限**（腾讯/东财/新浪/akshare 都是免费公开通道，只要不出故障就不限量）。这里是智兔的每日允许次数（默认 200），用来做配额节流：智兔配额不足时，动态筛选与备选池刷新会跳过并提示「明天再筛选」；其它通道的调用**不占用**这个额度，界面也分开显示。",
         "kind": "int",
         "options": None, "min": 1, "max": 5000, "step": 10, "unit": "次/日",
         "group": "数据源", "order": 20, "advanced": True,
@@ -1427,6 +1546,19 @@ def _sync_defaults(cfg=None):
     for p in PARAMS:
         p["default"] = dft.get(p["key"], None)
     return dft
+
+
+def refresh_defaults(cfg=None):
+    """**显式**重新同步 default（供配置写入后、或需要按当前配置断言时调用）。
+
+    为什么需要它（2026-09-16 修一类假失败）：`default` 是**导入时**快照进 PARAMS 的
+    （前端直接读 `PARAMS[i]["default"]`）。如果配置在导入之后被改写，PARAMS 里的
+    default 就成了"上一份配置"的镜像——此时拿"当前配置"去比对，必然报出
+    "X 在 config.json 里有值，但 default 是 None"这种**跨时间误判**。
+    需要"default 与当前配置一致"的调用方（如回归测试）应先调用本函数。
+    """
+    _sync_defaults(cfg)
+    return PARAMS
 
 
 # 导入即完成一次默认值同步，方便前端直接读 PARAMS[i]["default"]

@@ -1,6 +1,6 @@
 {
   "account": {
-    "name": "我的基金量化决策",
+    "name": "我的基金实验",
     "initial_cash": 1000.0,
     "target_value": 1300.0,
     "start_date": null,
@@ -398,8 +398,8 @@
     "news_dict_mode": "off",
     "news_include_other_events": false,
     "news_llm_enable": true,
-    "news_llm_cap": 120,
-    "news_llm_contribute": false,
+    "news_llm_cap": 300,
+    "news_llm_contribute": true,
     "risk_overlay_enable": false,
     "dynamic_weights": true,
     "dynamic_step": 0.03,
@@ -434,6 +434,13 @@
     "top_n": 3,
     "theme_max": 1,
     "momentum_weight": 0.8,
+    "portfolio_method": "adaptive",
+    "adaptive_signal": "mom20",
+    "adaptive_bull_score": 25,
+    "max_fund_weight": 0.45,
+    "max_theme_weight": 0.7,
+    "overheat_rsi": 0.0,
+    "overheat_mom5": 0.0,
     "min_momentum": 0.0,
     "relative_momentum": false,
     "risk_adjusted": false,
@@ -448,6 +455,8 @@
       "theme_heat": 0.1
     },
     "risk": {
+      "fund_stop_loss_enable": false,
+      "fund_take_profit_enable": false,
       "fund_stop_loss_pct": -0.08,
       "fund_take_profit_pct": 0.1,
       "fund_take_profit_full_pct": 0.25,
@@ -464,7 +473,10 @@
       "allow_early_exit_fee": false
     },
     "replay_news": true,
-    "news_score_cap": 25
+    "liquidity_reserve_yuan": 200.0,
+    "news_llm_batch": 20,
+    "news_low_conf_threshold": 0.45,
+    "context_min_samples": 5
   },
   "fees": {
     "buy_rate_default": 0.0,

@@ -43,17 +43,46 @@ def jprint(obj):
 
 
 def cmd_init(args):
+    """初始化/重置账户：**投入金额可自定义**，目标 = 投入 × 倍数（默认 1.3）。
+
+    优先级：`--cash` > 配置 `account.initial_cash`；
+            `--target`（显式金额）> `--target-multiple` > 配置 `account.target_multiple`。
+    改本金/倍数不需要动其他算法参数——目标、进度、LLM 提示词、回测判定都从这两个数推导。
+    """
     cfg = settings.load_config()
     db = Path(args.db)
-    ledger = Ledger(str(db), initial_cash=float(cfg["account"]["initial_cash"]))
+    cash = float(args.cash if args.cash is not None
+                 else (cfg.get("account", {}) or {}).get("initial_cash", 1000.0))
+    mult = args.target_multiple
+    if mult is None:
+        mult = float((cfg.get("account", {}) or {}).get("target_multiple", 1.3))
+    target = float(args.target) if args.target is not None else round(cash * float(mult), 2)
+    mult_eff = (target / cash) if cash else float(mult)
+    ledger = Ledger(str(db), initial_cash=cash)
     eng = Engine(cfg, ledger)
     if args.reset:
-        ledger.reset(float(args.cash))
-    eng.ensure_account()
-    meta = ledger.account_meta()
+        ledger.reset(cash)
+    meta = eng.ensure_account()
+    # **把计划写回配置**：本金/倍数/目标是"当前计划"，写回后参数面板、LLM 提示词、
+    # 回测判定、界面进度都能看到同一套数字（走 configedit 的安全写：白名单+校验+备份+热加载）。
+    cfg_written = None
+    try:
+        from fundai import configedit
+        res = configedit.apply_changes({
+            "account.initial_cash": cash,
+            "account.target_multiple": round(mult_eff, 6),
+        })
+        cfg_written = bool(res.get("ok"))
+        if not cfg_written and res.get("errors"):
+            print("提示：配置写回跳过（{}）".format("；".join(res["errors"])[:160]))
+    except Exception as e:
+        print("提示：配置写回失败（{}），但账本已初始化".format(str(e)[:120]))
     jprint({"ok": True, "db": str(db),
-            "message": "账户就绪：{} 元起步，目标 {} 元，期限 {} ~ {}".format(
-                meta.get("initial_cash"), meta.get("target_value"),
+            "initial_cash": cash, "target_value": target,
+            "target_multiple": round(mult_eff, 6),
+            "config_updated": cfg_written,
+            "message": "账户就绪：{:.0f} 元起步，目标 {:.0f} 元（+{:.0f}%），期限 {} ~ {}".format(
+                cash, target, (mult_eff - 1) * 100,
                 meta.get("start_date"), meta.get("end_date"))})
 
 
@@ -65,7 +94,11 @@ def cmd_run_daily(args):
     print("== {} ==".format(out.get("date", "?")))
     print("状态   :", out.get("status"))
     if out.get("status") in ("ok", "noop"):
-        print("观点   :", out.get("view"), "评分", out.get("score"), "来源", out.get("source"))
+        if out.get("view"):
+            print("观点   :", out.get("view"), "评分", out.get("score"),
+                  "来源", out.get("source"))
+        if out.get("message"):
+            print("消息   :", out.get("message"))
         for f in out.get("fills", []):
             print(" 成交  :", f.get("action"), f.get("code"), f.get("date"))
         for o in out.get("orders", []):
@@ -264,8 +297,115 @@ def cmd_signals_update(args):
     rep = calib.report()
     jprint({"updated": total, "settled_total": rep["total"],
             "by_event": rep["by_event"]})
-    print("提示：样本按交易日逐日积累（含下一交易日涨跌才结算），"
-          "财联社电报历史无法自动回溯；可每天收盘后运行一次本命令。")
+    print("提示：样本按交易日逐日积累（含下一交易日涨跌才结算）；"
+          "历史电报可用 python app.py news-calibrate --days 90 一次性回填校准"
+          "（时间游标回溯，已实测可用），不必再手工导入。")
+    return 0
+
+
+def cmd_direction_check(args):
+    """AI 次日方向判断：自动记录 + 自检命中率结算（幂等，可单独跑/补跑）。
+
+    为什么要有这条命令（2026-09-12 用户反馈“每天跑完诊断不再自动记录方向”）：
+      “记录方向 + 结算命中率”原先只写在 `run_daily` 主流程中段，而 `run_daily` 在
+      “当日已有研判记录”时会短路——于是当天第二次运行时方向与自检双双被跳过。
+      现在它是一条**独立任务链**：run_daily 主流程、run_daily 短路路径、计划任务
+      都能调到同一个入口，出问题也能单跑这一条命令补齐，不必重跑整天研判。
+
+    口径（与首页“观点”同源，未改动任何算法）：方向 = 平滑后合成评分经 view_of 推导，
+    下一交易日收盘后按“看多=涨 / 看空=跌 / 中性=|涨跌|≤0.3%”结算命中率。
+
+    用法：
+        python app.py direction-check                 # 今天（=最新交易日）记录 + 结算
+        python app.py direction-check --date 2026-09-11
+        python app.py direction-check --date 2026-09-11 --refresh   # 先联网刷新指数K线
+        python app.py direction-check --force         # 同日重跑也覆盖方向
+    """
+    from fundai import indicators, util
+    cfg = settings.load_config()
+    ledger = Ledger(str(Path(args.db)))
+    eng = Engine(cfg, ledger)
+    # 指数K线（决定“判断日”与当日涨跌）：默认走数据源缓存；--refresh 强制在线刷新
+    need_from = util.add_days(util.today_str(), -175)
+    if getattr(args, "refresh", False):
+        try:
+            idx = eng.market.index_history(need_from=need_from)
+        except DataError as e:
+            print("指数数据刷新失败：{}".format(e))
+            idx = []
+    else:
+        try:
+            idx = eng.market.index_history(need_from=need_from, offline=True)
+        except (DataError, TypeError):
+            idx = []
+    if not idx:
+        try:
+            idx = eng.market.index_history(need_from=need_from)
+        except DataError as e:
+            print("指数数据获取失败：{}".format(e))
+            return 1
+    dates = [x[0] for x in idx]
+    closes = [x[1] for x in idx]
+    vols = [x[2] for x in idx]
+    kline_date = str(dates[-1])[:10]              # 指数K线最新交易日（=结算口径的当日）
+    D = str(args.date or kline_date)[:10]         # 判断日（可显式指定，含非交易日）
+    st = indicators.last_stats(dates, closes, vols)
+    chg = (st.get("chg_pct") if st.get("date") == kline_date else None)
+    if kline_date != D:
+        print("提示：指数K线最新交易日为 {}（{} 无收盘K线，按非交易日/未收盘处理）："
+              "方向判断沿用该交易日收盘研判，结算用 {} 当日涨跌".format(
+                  kline_date, D, kline_date))
+    dc = eng.direction_record(D, force=bool(args.force),
+                              settle_with_chg=chg, settle_date=kline_date)
+    stats = eng.screen.direction_stats() if eng.screen else {}
+    latest = (stats.get("history") or [None])[0]
+    out = {
+        "date": D,
+        "market_date": kline_date,
+        "index": eng._idx_name(),
+        "day_chg": (None if chg is None else round(chg, 4)),
+        "direction": dc.get("direction"),
+        "judge_date": dc.get("from_date"),
+        "filed_as": dc.get("filed_as"),
+        "confidence": (None if dc.get("confidence") is None
+                       else round(float(dc["confidence"]), 3)),
+        "recorded": bool(dc.get("recorded")),
+        "kept": bool(dc.get("kept")),
+        "settled": dc.get("settled", 0),
+        "stats": {"total": stats.get("total"), "hit": stats.get("hit"),
+                  "hit_rate": stats.get("hit_rate"),
+                  "by_dir": stats.get("by_dir")},
+        "latest_settled": latest,
+        "skipped": dc.get("skipped"),
+        "error": dc.get("error"),
+    }
+    jprint(out)
+    dircn = {"bull": "看多", "bear": "看空", "neutral": "中性"}.get(
+        out["direction"], out["direction"] or "—")
+    if dc.get("error"):
+        print("结果   : 失败 —— {}".format(dc["error"]))
+        return 1
+    if out["skipped"]:
+        print("结果   : 跳过 —— {}".format(out["skipped"]))
+        return 1
+    print("判断日 : {}（{} {} {:+.2%}）".format(
+        D, eng._idx_name(), kline_date, chg or 0.0))
+    if dc.get("from_date") and dc.get("from_date") != D:
+        print("口径   : 沿用 {} 收盘研判，并记在该交易日的判断名下"
+              "（{} 非交易日，避免同一份数据重复计数）".format(dc["from_date"], D))
+    print("AI方向 : {}（信心 {:.0%}）{}".format(
+        dircn, float(dc.get("confidence") or 0),
+        "· 已记录" if dc.get("recorded") else "· 该判断日已有同向记录，保持不变"))
+    if dc.get("settled"):
+        print("已结算 : {} 条到期判断".format(dc["settled"]))
+    if latest:
+        print("最新自检: {} → {} 结算 {}（{}）".format(
+            latest.get("date"), latest.get("dir"),
+            latest.get("resolved_date"),
+            "命中" if latest.get("hit") else "未中"))
+    print("累计命中率: {}（命中 {} / 结算 {}）——网页「消息与进化」页可看明细".format(
+        "—" if stats.get("hit_rate") is None else "{:.1%}".format(stats["hit_rate"]),
+        stats.get("hit"), stats.get("total")))
     return 0
 
 
@@ -308,6 +448,267 @@ def cmd_fetch_history(args):
     return 0
 
 
+def cmd_news_calibrate(args):
+    """事件命中率校准：历史电报按线上同口径打分 → 对照次日沪深300涨跌。"""
+    from fundai import calib_history as calibration
+
+    def prog(pages, oldest):
+        if pages % 20 == 0:
+            print("  …已回溯 {} 页".format(pages), flush=True)
+    if getattr(args, "merge_caches", None):
+        from fundai import news as _news
+        names = [x.strip() for x in str(args.merge_caches).split(",") if x.strip()]
+        res = _news.merge_history_caches(names)
+        print("合并完成：{} 条 → {} 条（新增 {}）".format(
+            res["before"], res["after"], res["added"]))
+        return 0
+    if getattr(args, "fetch_only", False):
+        try:
+            hist = calibration.fetch_only(days=args.days, max_pages=args.max_pages,
+                                          delay=args.delay, progress=prog,
+                                          until=getattr(args, "until", None),
+                                          cache_name=getattr(args, "cache_name", None))
+        except Exception as e:
+            print("抓取失败：{}".format(e))
+            return 1
+        print("抓取完成：窗口内 {} 条电报，翻页 {} 页，缓存累计 {} 条".format(
+            len(hist.get("items") or []), hist.get("pages"),
+            hist.get("cache_total")))
+        return 0
+    try:
+        cal = calibration.calibrate(
+            days=args.days, max_pages=args.max_pages, delay=args.delay,
+            min_samples=args.min_samples, progress=prog,
+            use_cache=not args.fresh)
+    except Exception as e:
+        print("校准失败：{}".format(e))
+        return 1
+    print(calibration.text_report(cal))
+    mults = cal.get("suggest_multipliers") or {}
+    if mults:
+        print("\n建议倍数（经收缩；默认不生效，config.json → strategy.event_calibration=true 才应用）：")
+        for k, v in sorted(mults.items(), key=lambda kv: -kv[1]):
+            print("  {:<26} {:.3f}".format(k, v))
+    print("\n报告已写入 data\\event_calibration.json（网页「消息与进化」页可查看）")
+    return 0
+
+
+def cmd_event_model(args):
+    """事件 → 次日方向：walk-forward 样本外评估 + 按把握度分档的选择性预测。"""
+    from fundai import event_model
+    try:
+        rep = event_model.run(days=args.days, warmup=args.warmup, band=args.band,
+                              min_edge=args.min_edge, l2=args.l2,
+                              refit_every=args.refit, save=not args.no_save,
+                              select=args.select, feature_set=args.features)
+    except Exception as e:
+        print("建模失败：{}".format(e))
+        return 1
+    print(event_model.text_report(rep))
+    if rep.get("weights"):
+        print("\n系数绝对值 top12（全样本拟合，仅供理解模型，不参与评估）：")
+        for w in rep["weights"]:
+            print("  {:<30} {:+.3f}".format(w["feature"], w["coef"]))
+    if not args.no_save:
+        print("\n报告已写入 data\\event_model.json")
+    return 0
+
+
+def cmd_news_fetch_db(args):
+    """把财联社历史电报抓进 SQLite（可多段并行：--jobs，默认 CPU 核数）。"""
+    from fundai import news, clsdb, util
+    jobs = getattr(args, "jobs", None)
+
+    def prog(pages, oldest, tag=None):
+        if pages % 100 == 0:
+            print("  …{}已回溯 {} 页，库内 {:.1f} 万条".format(
+                (tag + " ") if tag else "", pages,
+                clsdb.stats()["telegrams"] / 10000.0), flush=True)
+    t0 = util.now_dt()
+    res = news.cls_fetch_to_db(days=args.days, until=args.until,
+                               max_pages=args.max_pages, delay=args.delay,
+                               progress=prog, jobs=jobs)
+    clsdb.backfill_dates()
+    print("抓取完成：翻页 {}，本次新增 {} 条，库内共 {} 条（{} → {}），耗时 {:.1f} 分钟{}".format(
+        res["pages"], res["added"], res["total"], res["from"], res["to"],
+        (util.now_dt() - t0).total_seconds() / 60.0,
+        "，并行 {} 段".format(res["jobs"]) if res.get("jobs") else ""))
+    print("库状态:", clsdb.stats())
+    return 0
+
+
+def cmd_news_score_db(args):
+    """把库内未打分的电报按线上同口径打分（增量，可多进程并行）。"""
+    from fundai import news, clsdb
+    jobs = getattr(args, "jobs", None)
+
+    def prog(done, total):
+        if done % 20000 == 0:
+            print("  …已打分 {}/{}".format(done, total), flush=True)
+    t0 = util.now_dt()
+    res = news.score_db(limit=args.limit, progress=prog, jobs=jobs)
+    print("打分完成：{} 条（剩余 {}，并行度 {}），耗时 {:.1f} 秒".format(
+        res["scored"], res["pending"], res.get("jobs", 1),
+        (util.now_dt() - t0).total_seconds()))
+    print("库状态:", clsdb.stats())
+    return 0
+
+
+def cmd_intraday_pulse(args):
+    """午间复盘（午间诊断）：上午行情 + 消息面 + 风险信号 → 短评并落库。
+
+    什么时候跑（2026-09-15 修正）：
+      * **上午收盘后（11:30 之后）** 跑最准 —— 诊断看的是"上午已经发生了什么"，
+        所以计划任务从原来的 12:00 提前到 **11:35**；
+      * 收盘后（15:05）再跑一次 `--settle` 用"收盘 vs 11:30"结算该观点的命中；
+      * 手动随时可跑：`python app.py intraday-pulse`（界面主面板也有按钮）。
+
+    输出说明：
+      * 正常：打印观点短评 + 午间自检命中率；
+      * **今日已诊断过**：直接说"已完成、跳过"，退出码 0（幂等）——这样计划任务
+        可以在 11:35 之后再加 11:40 / 11:45 两班"补跑"，某班网络瞬断也不会整天缺诊断
+        （2026-09-16：11:35 那次瞬断导致一整天没有午间诊断）；
+      * 行情彻底不可用：明确说原因、退出码 1（便于计划任务留痕与重试）。
+    """
+    from fundai import intraday
+    if getattr(args, "settle", False):
+        r = intraday.settle()
+        print(json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else r)
+        return 0 if r.get("ok") else 1
+    date_s = str(getattr(args, "date", None) or util.today_str())[:10]
+    if not getattr(args, "force", False):
+        # 幂等短路：今天已经诊断过就不再重取行情（补跑班次走到这里直接收工）
+        try:
+            st = intraday.status(days=1)
+            today = st.get("today") or {}
+            if st.get("date") == date_s and today.get("summary"):
+                print("午间复盘今日已完成（{}，观点 {}），本次跳过。"
+                      "如需重跑：python app.py intraday-pulse --force".format(
+                          today.get("time") or "", today.get("dir_view") or ""))
+                return 0
+        except Exception:
+            pass
+    r = intraday.run_midday(force=getattr(args, "force", False), date_s=date_s)
+    if not r.get("ok"):
+        print("午间复盘未执行：{}".format(r.get("message") or "原因未知"))
+        return 1
+    print(r.get("summary") or "")
+    st = intraday.stats(20)
+    if st.get("total"):
+        print("午间观点自检：命中 {}/{}（{:.0%}）".format(
+            st["hit"], st["total"], st["hit_rate"] or 0))
+    else:
+        print("午间观点自检：暂无已结算样本（收盘后跑一次 "
+              "python app.py intraday-pulse --settle 即可结算）")
+    return 0
+
+
+def cmd_intraday_status(args):
+    """打印午间复盘的状态（JSON）：今日是否已诊断、观点、原文、自检统计。
+
+    给界面/脚本用；只读，不触发任何在线请求。
+    """
+    from fundai import intraday
+    jprint(intraday.status(days=getattr(args, "days", 14) or 14))
+    return 0
+
+
+def cmd_archive_broadcasts(args):
+    """把"行情播报"从消息流里归档（可重复执行、幂等）。
+
+    为什么需要它（2026-09-16 用户反馈）：
+      消息列表里大量重复的是**指数/黄金等报价播报**（"深证成指涨1.01%，现报13422.186点；
+      上证指数涨0.30%…"、"现货黄金涨0.8%，现报每盎司2650美元"）。这类内容：
+        * 不是新闻而是**报价**，对次日方向不含增量信息（市场已实时定价）；
+        * 标题里数字每次都在变 → 标题去重必然失效，一天能刷几十条；
+        * 所以用户说"只是单纯的消息面，根本不构成利空利好"。
+      新采集的消息在**入库时**就会被打上 `market_broadcast` 并自动归档；
+      本命令用来清理**历史存量**，必要时可反复运行。
+    """
+    from fundai import screening
+    store = screening.ScreeningStore()
+    rows = [dict(r) for r in store.conn.execute(
+        "SELECT date,item_id,title,text,source,time,user_label,event_type "
+        "FROM items ORDER BY date DESC, rowid DESC").fetchall()]
+    hits = []
+    for d in rows:
+        if d.get("user_label") or d.get("event_type") == screening.BROADCAST_EVENT:
+            continue
+        kind = screening.detect_broadcast("{} {}".format(
+            d.get("title") or "", d.get("text") or ""))
+        if kind:
+            d["_kind"] = kind
+            hits.append(d)
+    if not hits:
+        jprint({"ok": True, "hit": 0, "merged_groups": 0, "dropped": 0,
+                "message": "没有需要归档的行情播报"})
+        return 0
+    groups = {}
+    for d in hits:
+        key = (d["date"], d["_kind"], screening.broadcast_key(d.get("title") or ""))
+        groups.setdefault(key, []).append(d)
+    if getattr(args, "dry_run", False):
+        jprint({"ok": True, "hit": len(hits), "merged_groups": len(groups),
+                "dry_run": True,
+                "sample": [d.get("title") for d in hits[:10]]})
+        return 0
+    dropped = 0
+    with store.conn:
+        for (date_s, kind, _k), grp in groups.items():
+            rep = grp[0]
+            store.conn.execute(
+                "UPDATE items SET event_type=?, auto_label='irrelevant', "
+                "auto_strength=0, auto_net=0, decided_by='auto_archive', "
+                "auto_reason=?, confidence=0 WHERE date=? AND item_id=?",
+                (screening.BROADCAST_EVENT,
+                 "行情播报（{}，纯报价不含事件）→ 自动归档，不参与打分".format(kind),
+                 date_s, rep["item_id"]))
+            for d in grp[1:]:
+                store.conn.execute(
+                    "INSERT OR REPLACE INTO archived_items"
+                    "(date,item_id,source,time,title,text,url,reason,archived_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (d["date"], d["item_id"], d.get("source") or "",
+                     d.get("time") or "", d.get("title") or "", "", "",
+                     "broadcast:" + kind, util.now_iso()))
+                store.conn.execute(
+                    "DELETE FROM items WHERE date=? AND item_id=?",
+                    (d["date"], d["item_id"]))
+                dropped += 1
+    jprint({"ok": True, "hit": len(hits), "merged_groups": len(groups),
+            "representatives": len(groups), "dropped": dropped,
+            "message": "已归档 {} 组行情播报（合并掉 {} 条重复行，原文存入 "
+                       "archived_items）".format(len(groups), dropped)})
+    return 0
+
+
+def cmd_micro_pulse(args):
+    """涨停情绪复盘（微观结构脉搏）：借鉴 Cailianpress-Feishu-Bot 的同花顺量化复盘算法。"""
+    from fundai import microstructure
+    date_s = str(args.date or util.today_str())[:10]
+    pulse = microstructure.load_pulse(date_s, force=args.force,
+                                      cfg=settings.load_config())
+    out = {"ok": bool(pulse.get("ok")), "date": date_s}
+    if not pulse.get("ok"):
+        out["message"] = pulse.get("message")
+        jprint(out)
+        return 1
+    snap = pulse["snap"]
+    out["score"] = snap.get("score")
+    out["parts"] = snap.get("parts")
+    out["qualitative"] = snap.get("qualitative")
+    hist = microstructure.history_pulses(date_s, days=args.days)
+    out["history"] = [{"date": h.get("date"), "score": h.get("score"),
+                       "zt": h.get("zt"), "dt": h.get("dt"),
+                       "promotion_rate": h.get("promotion_rate"),
+                       "zb_rate": h.get("zb_rate")} for h in hist]
+    jprint({k: v for k, v in out.items() if k != "history"})
+    print("—— 复盘正文 ——")
+    for ln in microstructure.review_lines(pulse):
+        print(ln)
+    return 0
+
+
 def cmd_serve(args):
     cfg = settings.load_config()
     db = DB_DEMO if args.demo else DB_LIVE
@@ -330,14 +731,18 @@ def cmd_serve(args):
 def main():
     _utf8()
     p = argparse.ArgumentParser(prog="app.py",
-                                description="AI 基金 1000 元半年挑战 1500 实验（仅场外基金）")
+                                description="AI 基金实验（投入金额可自定义，目标 = 投入 × 1.3；仅场外基金）")
     sub = p.add_subparsers(dest="cmd")
 
-    i = sub.add_parser("init", help="初始化正式账户")
+    i = sub.add_parser("init", help="初始化正式账户（投入金额可自定义，目标=投入×倍数）")
     i.add_argument("--db", default=str(DB_LIVE))
     i.add_argument("--reset", action="store_true", help="清空账本重新开始")
     i.add_argument("--cash", type=float, default=None,
-                   help="重置时使用的初始资金（默认读取 config.json）")
+                   help="投入总金额（默认读取 config.json → account.initial_cash，默认 1000）")
+    i.add_argument("--target-multiple", type=float, default=None,
+                   help="目标倍数：目标 = 投入 × 该值（默认取配置 account.target_multiple，即 1.3）")
+    i.add_argument("--target", type=float, default=None,
+                   help="直接指定目标金额（优先于 --target-multiple，用于兼容旧用法）")
     i.set_defaults(fn=cmd_init)
 
     r = sub.add_parser("run-daily", help="运行当日研判与指令")
@@ -404,6 +809,17 @@ def main():
     su.add_argument("--days", type=int, default=7)
     su.set_defaults(fn=cmd_signals_update)
 
+    dc = sub.add_parser("direction-check",
+                        help="AI 次日方向判断：自动记录 + 自检命中率结算（可补跑指定日期）")
+    dc.add_argument("--db", default=str(DB_LIVE))
+    dc.add_argument("--date", default=None,
+                    help="判断日 YYYY-MM-DD（默认=指数K线最新交易日）")
+    dc.add_argument("--refresh", action="store_true",
+                    help="先用数据源刷新指数K线（需要刚收盘那根 bar 时用）")
+    dc.add_argument("--force", action="store_true",
+                    help="该日已有记录时也覆盖方向（默认保留首次判断）")
+    dc.set_defaults(fn=cmd_direction_check)
+
     sr = sub.add_parser("signals-report", help="输出 事件类型×命中率 校准报告")
     sr.set_defaults(fn=cmd_signals_report)
 
@@ -412,6 +828,86 @@ def main():
     ci.add_argument("--file", required=True)
     ci.add_argument("--date", default=None)
     ci.set_defaults(fn=cmd_cls_import)
+
+    mp = sub.add_parser("micro-pulse",
+                        help="涨停情绪复盘：晋级率/炸板率/题材持续性/连板梯队/情绪分（同花顺微观结构）")
+    mp.add_argument("--date", default=None, help="YYYY-MM-DD，默认今天")
+    mp.add_argument("--force", action="store_true", help="忽略缓存强制重抓")
+    mp.add_argument("--days", type=int, default=5, help="附带最近 N 日情绪史")
+    mp.set_defaults(fn=cmd_micro_pulse)
+
+    nc = sub.add_parser("news-calibrate",
+                        help="事件命中率校准：财联社历史电报（时间游标回溯）→ 次日涨跌命中率")
+    nc.add_argument("--days", type=int, default=10, help="回溯自然日数（默认 10）")
+    nc.add_argument("--max-pages", type=int, default=600,
+                    help="最多翻页数（每页 50 条，默认 600）")
+    nc.add_argument("--delay", type=float, default=0.3, help="翻页间隔秒，礼貌限速")
+    nc.add_argument("--min-samples", type=int, default=5,
+                    help="给出建议倍数所需最小样本数")
+    nc.add_argument("--fresh", action="store_true", help="忽略磁盘缓存重新抓取")
+    nc.add_argument("--fetch-only", dest="fetch_only", action="store_true",
+                    help="只抓历史电报入库（不跑校准），适合先长时间回填")
+    nc.add_argument("--until", default=None,
+                    help="分段并行用：从该日期（YYYY-MM-DD）开始往回抓")
+    nc.add_argument("--cache-name", dest="cache_name", default=None,
+                    help="分段并行用：自定义缓存文件名（各 worker 各写各的）")
+    nc.add_argument("--merge-caches", dest="merge_caches", default=None,
+                    help="把逗号分隔的分段缓存合并进主缓存（可与其他参数同时使用）")
+    nc.set_defaults(fn=cmd_news_calibrate)
+
+    em = sub.add_parser("event-model",
+                        help="事件→次日方向 的样本外(walk-forward)评估与选择性预测（分档命中率）")
+    em.add_argument("--days", type=int, default=400, help="使用最近 N 个自然日的缓存电波")
+    em.add_argument("--warmup", type=int, default=40, help="前 N 天只用于训练/热身")
+    em.add_argument("--band", type=float, default=0.003,
+                    help="次日 |涨跌| 小于该值算无方向噪声（默认 0.3%%）")
+    em.add_argument("--min-edge", type=float, default=0.02,
+                    help="|p−0.5| 达到该值才算出“出手”")
+    em.add_argument("--l2", type=float, default=2.0, help="L2 正则强度")
+    em.add_argument("--refit", type=int, default=5, help="每 N 天重训一次（walk-forward）")
+    em.add_argument("--no-save", action="store_true", help="不写 data/event_model.json")
+    em.add_argument("--select", action="store_true",
+                    help="额外做“配置选择期/留出期分离”评估（较慢但最可信）")
+    em.add_argument("--features", default="market",
+                    choices=["all", "market", "market_events", "no_dict", "events"],
+                    help="特征组（默认 market＝指数状态+跨市场风格，实测最稳）")
+    em.set_defaults(fn=cmd_event_model)
+
+    fd = sub.add_parser("news-fetch-db",
+                        help="把财联社历史电报抓进 SQLite（多段并行回填，4 年量级）")
+    fd.add_argument("--days", type=int, default=300, help="本段回溯自然日数")
+    fd.add_argument("--until", default=None, help="起点（YYYY-MM-DD），指定后只抓这一段")
+    fd.add_argument("--max-pages", type=int, default=20000, help="本段最多翻页数")
+    fd.add_argument("--delay", type=float, default=0.25, help="翻页间隔秒")
+    fd.add_argument("--jobs", type=int, default=None,
+                    help="并行段数（默认 CPU 核数；1=串行；也可用 FUNDAI_JOBS）")
+    fd.set_defaults(fn=cmd_news_fetch_db)
+
+    sd = sub.add_parser("news-score-db",
+                        help="把库内未打分电报按线上同口径打分（增量，可多进程并行）")
+    sd.add_argument("--limit", type=int, default=None, help="最多打分条数")
+    sd.add_argument("--jobs", type=int, default=None,
+                    help="并行度（默认 CPU 核数；1=串行；也可用环境变量 FUNDAI_JOBS）")
+    sd.set_defaults(fn=cmd_news_score_db)
+
+    ist = sub.add_parser("intraday-status",
+                         help="查看午间复盘状态（今日是否已诊断/观点/自检命中率，JSON）")
+    ist.add_argument("--days", type=int, default=14, help="附带最近 N 天历史")
+    ist.set_defaults(fn=cmd_intraday_status)
+
+    ab = sub.add_parser(
+        "archive-broadcasts",
+        help="归档行情播报（指数/黄金等纯报价，不构成利空利好）→ 清理消息列表重复")
+    ab.add_argument("--dry-run", action="store_true", help="只看会命中什么，不写入")
+    ab.set_defaults(fn=cmd_archive_broadcasts)
+
+    ip = sub.add_parser("intraday-pulse",
+                        help="午间盘中诊断（12:00 自动任务）：上午行情+消息面+风险信号→短评并落库")
+    ip.add_argument("--force", action="store_true", help="忽略缓存重取行情")
+    ip.add_argument("--date", default=None, help="指定日期（YYYY-MM-DD，默认今天）")
+    ip.add_argument("--settle", action="store_true",
+                    help="收盘后结算当日午间观点（用 收盘/11:30 判定命中）")
+    ip.set_defaults(fn=cmd_intraday_pulse)
 
     args = p.parse_args()
     if not args.cmd:

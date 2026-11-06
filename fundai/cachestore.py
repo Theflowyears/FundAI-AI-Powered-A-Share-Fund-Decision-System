@@ -84,6 +84,39 @@ def _key(name):
     return Path(str(name)).name
 
 
+def _in_configured_cache_dir(path):
+    """该路径是否落在**本项目配置的** `data/cache/` 下。
+
+    为什么必须判断：离线回测/审计用例会把指数K线缓存路径**临时重定向到别处**
+    （模拟"缓存为空"）。那种情况下如果照样回退到本项目的 `cache.db`，
+    用例的前提就不成立了（读出来的是项目里的长历史）。所以只有"读的确实是
+    本项目缓存目录里的文件且它不存在"时才回退查库——**缓存路径一旦被重定向，
+    库这层自动让路**，语义保持"文件系统说了算"。
+    """
+    if not enabled():
+        return False
+    try:
+        from . import util
+        base = Path(str(util.CACHE_DIR)).resolve()
+        p = Path(str(path))
+        try:
+            rp = p.resolve()
+        except OSError:
+            rp = Path(os.path.abspath(str(p)))
+        return rp.parent == base
+    except Exception:
+        return False
+
+
+def fallback_for(path, default, allow=True):
+    """只读回退：库里有 → 返回它；否则返回 default（`util.load_json` 内部用）。"""
+    if allow and _in_configured_cache_dir(path):
+        v = value(Path(str(path)).name)
+        if v is not None:
+            return v
+    return default
+
+
 def has(name):
     """库里是否有这条缓存（只查 key，不解析内容）。"""
     if not enabled():

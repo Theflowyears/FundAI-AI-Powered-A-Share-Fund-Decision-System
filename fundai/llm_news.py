@@ -8,9 +8,15 @@
 - 精确度上：判利多但含明显负面词 4.0%，判利空但含明显正面词 7.5%，
   且利多:利空 = 44260:17994（系统性偏多）。
 
-**怎么用**：只对词典兜底那条桶（未命中任何事件规则）的消息调用 LLM，
-按天限量（默认 120 条/天，按 |词典强度| 优先——它们主导当日分数），
-磁盘缓存（同一 id 永不重复计费），任何失败都自动回退词典标签，绝不断主流程。
+**怎么用**（2026-09-16 按用户要求改为「AI 为主」）：
+- LLM 判断**直接计入消息分**（`contribute=True` 默认），不再只做降噪一票否决——
+  实测 `news_llm_contribute=False` 时 AI 判了什么对评分毫无影响，等于白花钱；
+- 覆盖面从"词典兜底桶"扩大到**整条流**，按 `🔴重要 → |词典强度| → 主题命中等`
+  排序取前 `news_llm_cap` 条（其余走本地 `context.assess()` 的上下文兜底）；
+- **把市场状态喂给模型**：同一条"降准"在"当日已大涨"与"连续下跌"下的方向不同，
+  这就是用户说的"利空利多每天都在变"——所以 prompt 里带当日涨跌与状态标签，
+  且缓存按 (prompt 版本, 市场状态) 分组，行情变了会重判而不是复用旧结论；
+- 磁盘缓存（同一 id + 同一状态永不重复计费），任何失败都自动回退本地兜底，绝不断主流程。
 
 标签 → 强度：big_bull/big_bear = ±6，bull/bear = ±2，neutral/irrelevant = 0。
 """
@@ -19,6 +25,8 @@ import json
 from . import util
 
 CACHE = "llm_news_labels.json"
+# 提示词版本：改了 SYSTEM 或输出口径就 +1，使旧缓存自动失效（避免"口径变了还在用旧判断"）
+PROMPT_VERSION = 3
 LABEL_STRENGTH = {"big_bull": 6, "bull": 2, "neutral": 0, "bear": -2,
                   "big_bear": -6, "irrelevant": 0}
 VALID = set(LABEL_STRENGTH.keys())
@@ -36,6 +44,14 @@ SYSTEM = (
     "不要因为出现‘增长、中标、项目’等词就判利好；\n"
     "5) 与A股行情无关（海外政治、体育、娱乐、天气、纯科普）= irrelevant；\n"
     "6) 程度：big_* 用于能改变市场级别的重大事件，其余用 bull/bear，不确定一律 neutral。\n"
+    "7) **方向取决于上下文，不要凭关键词下结论**：\n"
+    "   · 同一个词在不同语境下方向可能相反：『自动驾驶事故/召回』利空，"
+    "『自动驾驶法规落地/量产获批』利多；『签约订单』利多，『解除合同』利空。\n"
+    "   · 注意否定与转折：『未能/不再/未触及』会把方向反转；"
+    "『但/然而/不过』之后的分句才是真实结论。\n"
+    "   · 『交易所/公告/披露/申报/成交额/分化』这类词只是新闻措辞，**不构成方向**。\n"
+    "   · 结合我给你的【当日市场状态】：若当日已大涨而消息偏多，要警惕「利好出尽」，"
+    "可降级为 neutral；若已大跌而消息偏空，同样可降级。\n"
     "只输出 JSON，不要解释。"
 )
 
@@ -45,15 +61,57 @@ def _cache_path():
 
 
 def load_cache():
-    return util.load_json(_cache_path(), {"labels": {}}) or {"labels": {}}
+    store = util.load_json(_cache_path(), {"labels": {}}) or {"labels": {}}
+    # 提示词版本变化 → 旧判断作废（口径已变，沿用会污染结论）
+    if int(store.get("prompt_version") or 0) != PROMPT_VERSION:
+        return {"prompt_version": PROMPT_VERSION, "labels": {}}
+    return store
 
 
 def save_cache(store):
+    store = dict(store or {})
+    store["prompt_version"] = PROMPT_VERSION
     util.save_json(_cache_path(), store)
 
 
-def classify_batch(items, cfg, timeout=120):
-    """一批（≤30 条）→ {id: {label, strength, confidence, reason}}。失败返回 {}。"""
+def context_key(regime=None):
+    """把"当下市场状态"折成一个短键，用于缓存分组。
+
+    为什么要它：方向会随行情阶段变化（用户："利空利多不是每天都在变得吗"）。
+    同一条消息在"上涨段"和"下跌段"被判成不同方向是**正确**的，缓存必须区分，
+    否则第一次的判断会被永久复用。
+    """
+    r = regime or {}
+    try:
+        chg = float(r.get("chg") or 0.0)
+    except (TypeError, ValueError):
+        chg = 0.0
+    band = "up" if chg > 0.8 else ("down" if chg < -0.8 else "flat")
+    return "{}_{}".format(PROMPT_VERSION, band)
+
+
+def regime_brief(regime=None):
+    """渲染给模型的【当日市场状态】文字。"""
+    r = regime or {}
+    if not r:
+        return "（未提供）"
+    chg = r.get("chg")
+    parts = []
+    if chg is not None:
+        parts.append("沪深300 当日 {:+.2f}%".format(float(chg)))
+    for k, label in (("ma_align", "均线多头"), ("vol_rank", "波动分位"),
+                     ("micro_pct", "情绪分位")):
+        if r.get(k) is not None:
+            parts.append("{}={}".format(label, r.get(k)))
+    return "；".join(parts) or "（未提供）"
+
+
+def classify_batch(items, cfg, timeout=120, regime=None):
+    """一批（≤30 条）→ {id: {label, strength, confidence, reason}}。失败返回 {}。
+
+    `regime` 为当日市场状态：模型需要它才能判断"利好出尽/利空兑现"这类
+    **随行情变化**的方向，否则同一句话在任何行情下都会被判成同一个方向。
+    """
     llm = (cfg or {}).get("llm") or {}
     if not llm.get("enabled") or not llm.get("api_key"):
         return {}
@@ -63,7 +121,8 @@ def classify_batch(items, cfg, timeout=120):
     payload_items = [{"id": it.get("id"), "title": (it.get("title") or "")[:MAX_TITLE],
                       "text": (it.get("text") or "")[:MAX_TEXT],
                       "time": it.get("time") or ""} for it in items]
-    user = ("【快讯列表】\n" + json.dumps(payload_items, ensure_ascii=False) +
+    user = ("【当日市场状态】" + regime_brief(regime) + "\n"
+            "【快讯列表】\n" + json.dumps(payload_items, ensure_ascii=False) +
             "\n\n输出 JSON：{\"items\":[{\"id\":\"原样回填\",\"label\":\"big_bull|bull|"
             "neutral|bear|big_bear|irrelevant\",\"confidence\":0~1,"
             "\"reason\":\"不超过20字\"}]}，条数与输入一致，只输出 JSON。")
@@ -109,20 +168,34 @@ def classify_batch(items, cfg, timeout=120):
 
 
 def label_items(items, cfg, max_items=120, batch=20, use_cache=True,
-                progress=None):
-    """词典兜底桶 → LLM 标签（缓存 + 限量 + 回退）。
+                progress=None, regime=None, all_items=False):
+    """整条消息流 → LLM 标签（缓存 + 限量 + 回退）。
 
-    返回 {"labels": {id: {...}}, "calls": n, "from_cache": n, "skipped": n}
+    与旧版的两处关键差别（2026-09-16「AI 为主」改造）：
+      1. `all_items=True` 时**不再只看"词典兜底桶"**，而是覆盖整条流，按
+         `🔴重要 → |本地强度| → 主题命中数` 排序取前 `cap` 条；
+      2. 缓存按 `context_key(regime)` 分组——**行情状态变了就重判**，
+         不会把"上涨段"的结论永久复用到"下跌段"。
+
+    返回 {"labels": {id: {...}}, "calls": n, "from_cache": n,
+          "skipped": n, "candidates": n, "context": 状态键}
     """
     st = (cfg or {}).get("strategy") or {}
-    cap = int(max_items or st.get("news_llm_cap", 120) or 0)
+    cap = int(max_items if max_items is not None
+              else st.get("news_llm_cap", 120) or 0)
     batch = max(1, min(30, int(batch or st.get("news_llm_batch", 20) or 20)))
     store = load_cache() if use_cache else {"labels": {}}
-    cached = dict(store.get("labels") or {})
-    # 优先队列：🔴重要 → |词典强度| 大 → 命中主题多（它们主导当日分数）
-    cand = [e for e in (items or [])
-            if e.get("event_type") == "dict"
-            and e.get("auto_label") in ("bull", "bear")]
+    cached_all = dict(store.get("labels") or {})
+    ckey = context_key(regime)
+    # 只复用**同一市场状态**下的旧判断（见 context_key 注释）
+    cached = {k: v for k, v in cached_all.items()
+              if (v or {}).get("context") == ckey}
+    if all_items:
+        cand = [e for e in (items or []) if e.get("id") is not None]
+    else:
+        cand = [e for e in (items or [])
+                if e.get("event_type") == "dict"
+                and e.get("auto_label") in ("bull", "bear")]
     cand.sort(key=lambda e: (-(1 if e.get("important") else 0),
                              -abs(int(e.get("auto_strength") or 0)),
                              -len(e.get("sectors") or [])))
@@ -132,7 +205,7 @@ def label_items(items, cfg, max_items=120, batch=20, use_cache=True,
     calls, fails = 0, 0
     for i in range(0, len(todo), batch):
         chunk = todo[i:i + batch]
-        got = classify_batch(chunk, cfg)
+        got = classify_batch(chunk, cfg, regime=regime)
         calls += 1
         if progress:
             progress(min(i + batch, len(todo)), len(todo))
@@ -146,6 +219,7 @@ def label_items(items, cfg, max_items=120, batch=20, use_cache=True,
             v = dict(v)
             v["title"] = next((e.get("title") or "" for e in chunk
                                if str(e.get("id")) == k), "")[:60]
+            v["context"] = ckey
             cached[k] = v
         if calls % 5 == 0 and use_cache:
             save_cache({"updated": util.now_iso(), "labels": cached})
@@ -155,15 +229,16 @@ def label_items(items, cfg, max_items=120, batch=20, use_cache=True,
                        for e in cand if str(e.get("id")) in cached},
             "calls": calls, "from_cache": len(cand) - len(todo),
             "skipped": len(todo) - sum(1 for e in todo if str(e.get("id")) in cached),
-            "candidates": len(cand)}
+            "candidates": len(cand), "context": ckey}
 
 
-def apply_labels(feed, labels, contribute=False):
-    """把 LLM 标签写回 feed（保留词典判断在 dict_label 字段里，便于对照）。
+def apply_labels(feed, labels, contribute=True):
+    """把 LLM 标签写回 feed（保留本地判断在 dict_label 字段里，便于对照）。
 
-    contribute=False（默认）：LLM 只作**降噪/一票否决**——它判中性/无关的条目
-    不再计入净情绪，其方向判断不额外加分（实测它与词典方向一致率 94%、
-    命中率并不更高，见 README「5.2 消息面口径治理」）；contribute=True 才让 LLM 方向计入。
+    `contribute=True`（2026-09-16 起的默认）：**AI 的方向直接计入消息分**。
+    旧默认是 False，只让 LLM 做"降噪一票否决"（判中性/无关的条目不计净情绪），
+    结果就是"AI 判了也不影响评分"——用户明确要求改成 AI 为主，故翻转默认值。
+    仍保留 `contribute=False` 供回测对照（README §5.2 的历史口径）。
     """
     n = 0
     for e in feed or []:
@@ -180,5 +255,7 @@ def apply_labels(feed, labels, contribute=False):
         e["llm_label"] = True
         e["llm_contribute"] = bool(contribute)
         e["llm_dropped"] = lab["label"] in ("neutral", "irrelevant")
+        e["decided_by"] = "ai" if contribute else "ai_veto"
+        e["confidence"] = lab.get("confidence")
         n += 1
     return n

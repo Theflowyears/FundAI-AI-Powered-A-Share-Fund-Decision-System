@@ -18,12 +18,15 @@
 所有基金均为场外普通基金（股票/指数/债券型），本程序不交易股票。
 """
 import json
+import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import quote
 
+from . import api_usage
 from . import util
 from .util import DataError
 
@@ -39,6 +42,11 @@ EA_NAV_URL = "https://api.fund.eastmoney.com/f10/lsjz"
 EA_NAV_HEADERS = {"Referer": "https://fundf10.eastmoney.com/"}
 EA_PINGZHONG = "https://fund.eastmoney.com/pingzhongdata/{code}.js"
 EA_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+# 东财K线需要普通浏览器请求头：无头直连常被"远端直接断开"（实测重试即可成功）
+EA_KLINE_HEADERS = {"Referer": "https://quote.eastmoney.com/",
+                    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                   "Chrome/120.0 Safari/537.36")}
 EA_KLINE_FIELDS = ("fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,"
                    "f56,f57,f58,f59,f60,f61&klt=101&fqt=0")
 EA_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
@@ -47,16 +55,88 @@ SINA_QUOTE_URL = "https://hq.sinajs.cn/list={codes}"
 SINA_QUOTE_REFERER = "https://finance.sina.com.cn/"
 TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q={codes}"
 TENCENT_QUOTE_REFERER = "https://stock.qq.com/"
+# 分时：腾讯 5 分钟 K（web.ifzq）与新浪 1 分钟线（quotes_service）
+TENCENT_MKLINE = ("https://web.ifzq.gtimg.cn/appstock/app/kline/mkline"
+                  "?param={sym},m5,,120")
+SINA_MINLINE = ("https://quotes.sina.cn/cn/api/json_v2.php/"
+                "CN_MarketDataService.getKLineData?symbol={sym}&scale=5&ma=no&datalen=120")
+# 大盘概览：新浪行情中心全市场分页（node=hs_a，含沪深京；每页最多 3000 行）
+SINA_MARKET_PAGE = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "Market_Center.getHQNodeData?page={page}&num={num}&sort=symbol&asc=1"
+    "&node=hs_a&symbol=&_s_r_a=page")
+# 大盘概览缓存 TTL（秒）：盘中 5 分钟足够（家数变化慢），且首页不必为此等待
+OVERVIEW_TTL = 300
+# 新浪这个接口单页最多 100 行（实测 num=3000 也只回 100）→ 需要翻页
+#   FAST：首次快照只拉这几页（8 线程并发 ≈ 单页耗时），先让界面有数
+#   FULL：后台补全全市场（56 页 × 100 只 ≈ 5600 只）
+OVERVIEW_PAGES_FAST = 12
+OVERVIEW_PAGES_FULL = 58
+# 页间间隔（秒）：新浪对"翻页太快"会直接 456 限流，串行 + 间隔才稳
+OVERVIEW_PAGE_GAP = 0.25
+# 大盘概览快照文件（统计源失败时的兜底：显示上一次成功结果并标注时间）
+OVERVIEW_SNAPSHOT = "market_overview.json"
+# 快照可用上限：6 小时（更旧就不用，免得把昨天当今天）
+OVERVIEW_SNAPSHOT_MAX_AGE = 6 * 3600
+SINA_MARKET_COUNT = ("https://vip.stock.finance.sina.com.cn/quotes_service/api/"
+                     "json_v2.php/Market_Center.getHQNodeData"
+                     "?page=1&num=1&sort=symbol&asc=1&node=hs_a&symbol=&_s_r_a=page")
+# 东财"计数法"：clist 的 data.total = 满足条件的股票数；pz=1 只回一行，代价极小
+EA_COUNT_URL = ("https://push2.eastmoney.com/api/qt/clist/get?"
+                "pn=1&pz=1&np=1&fltt=2&invt=2&fields=f3,f12")
+# 沪深京全A（沪主板 + 科创 + 深主板 + 创业板 + 北交所）
+EA_ALL_A = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+# 涨跌停阈值（%）：主板 10% / 创业板科创板 20%，统一按 9.9% 判封板
+EA_LIMIT_PCT = 9.9
+
+# 腾讯榜单（proxy）：A 股全市场分页，字段 zdf=涨跌幅(%)、turnover=成交额(万元)
+TENCENT_RANK = ("https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/"
+                "getBoardRankList?board_code=aStock&sort_type=price"
+                "&direct=down&offset={offset}&count={count}")
+TENCENT_RANK_PAGES = 24
+
+# 东财涨跌停池（家数更准，作为覆盖值）
+EA_ZT_POOL = ("https://push2ex.eastmoney.com/getTopicZTPool?ut=7eea3edcaed734bea9cbfc24409ed989"
+              "&dpt=wz.ztzt&Pageindex=0&pagesize=220&sort=fbt%3Aasc&date={today}")
+EA_DT_POOL = ("https://push2ex.eastmoney.com/getTopicDTPool?ut=7eea3edcaed734bea9cbfc24409ed989"
+              "&dpt=wz.ztzt&Pageindex=0&pagesize=220&sort=fund%3Aasc&date={today}")
 
 ZT_FRESH_TTL = 900  # 秒
-QUOTE_FRESH_TTL = 120  # 指数实时行情缓存秒数（>前端 60s 轮询，界面轮询不消耗配额）
+QUOTE_FRESH_TTL = 180  # 指数实时行情缓存秒数（>前端 60s 大盘轮询；15 分钟要求取 3 分钟）
 
 # 收盘价确认时刻：当天 15:05 之后抓到的指数K线才算“已收盘完整bar”
 CLOSE_TIME = "15:05"
 
+
+def _session_phase(now=None):
+    """A 股交易时段（北京时间）：pre_open / am / noon / pm / closed / weekend。
+
+    供主界面显示"现在是不是盘中、下一次刷新会在什么时候"——用户看首页时最想
+    确认的一件事。节假日不单独判定（按工作日近似，与项目其它地方口径一致）。
+    """
+    dt = now or util.now_dt()
+    if dt.weekday() >= 5:
+        return "weekend"
+    hm = dt.strftime("%H:%M")
+    if hm < "09:15":
+        return "pre_open"
+    if hm < "09:30":
+        return "auction"
+    if hm <= "11:30":
+        return "am"
+    if hm < "13:00":
+        return "noon"
+    if hm <= "15:00":
+        return "pm"
+    return "closed"
+
 # ---- AKShare 安全探测（避免把不稳定的 V8/py_mini_racer 依赖 import 进长驻服务） ----
 _AK_STATE = {"checked": False, "ok": True}
 _AK_LOCK = threading.Lock()
+
+# 计数上下文（线程局部）：一次逻辑调用里的多个 HTTP 请求只汇总成一条记录，
+# 避免“分页 20 页”被记成 20 次调用，同时保留真实请求次数（attempts）。
+_CALL_CTX = threading.local()
 
 
 def probe_akshare_safe():
@@ -95,7 +175,8 @@ class Market:
     - data.provider = "eastmoney"：全部走东财/天天基金公开接口。
     """
 
-    def __init__(self, cfg=None):
+    def reload(self, cfg=None):
+        """装载/热更新配置（__init__ 与 config.json 热重载共用，字段口径唯一）。"""
         self.cfg = cfg or {}
         self.data_cfg = self.cfg.get("data", {}) or {}
         self.token = (self.data_cfg.get("zhitu_token") or "").strip()
@@ -105,17 +186,27 @@ class Market:
         self.use_zhitu = bool(self.token) and self.provider in ("zhitu", "akshare")
         # 兼容旧调用：provider == zhitu 且带 Token
         self.zhitu_on = bool(self.token) and self.provider == "zhitu"
+
+    def __init__(self, cfg=None):
+        self.reload(cfg)
         self.warnings = []
         self._probe = None
         self._fresh_ts = {}
-        self._zt_calls = {}   # date -> 智兔调用次数
-        self._ak_calls = {}   # date -> akshare 调用次数
+        # 净值"新鲜度"读盘记忆：{code: ((mtime_ns, size), 检查时刻, 是否新鲜)}
+        # 只在 20 秒内同签名时复用（见 nav_is_fresh），避免每只基金每轮刷新都真读盘
+        self._fresh_memo = {}
+        # 辅助组件（分时/大盘概览）的短 TTL 缓存：{key: (时间戳, 值)}
+        self._aux_cache = {}
+        # 大盘概览的后台预热线程（避免首页为了"涨跌家数"等 1.5 秒）
+        self._ov_thread = None
         self._ak_ok = None
         self._ak_fail_streak = 0   # akshare 连续瞬时失败计数（>=4 才永久停用）
         self._zt_limit = int(self.data_cfg.get("zhitu_daily_limit", 200) or 200)
         self._idx_quote = None      # 指数实时行情缓存
         self._idx_quote_ts = 0.0
         self._bootstrap_calendar()  # 用本地K线缓存注册交易日历（离线可用）
+        # 注意：调用计数**不再放内存**（重启就清零的老 BUG）——统一由
+        # fundai.api_usage 落盘到 data/api_usage.json，按日期分桶。
 
     # ---------------- 交易日历 ----------------
     def _register_calendar(self, items):
@@ -141,76 +232,249 @@ class Market:
             return "智兔数服 + 东财兜底"
         return "东财/天天基金"
 
-    def _nav_chain(self):
-        """净值获取通道顺序（成功即停）。AKShare 仅当子进程探测可用时启用。"""
-        chain = []
+    def _nav_chain(self, warm=False):
+        """净值获取通道顺序（成功即停）。AKShare 仅当子进程探测可用时启用。
+
+        ``warm=True``（**该基金已有覆盖所需区间的本地缓存**，只是最近几天要补）：
+        把东财提到首位。原因是实测数据：
+          * akshare `fund_open_fund_info_em` 每次都拉**全量**历史（0.5~1.3s/只），
+            缓存再全也白拉；
+          * 东财直连只取"近端区间 + 增量"（0.18~0.25s/只），且 `_em_fund_history`
+            自带"缓存够深就不补深"的判断。
+        15 只基金的日常刷新因此从"串行十几秒"降到"并行 1~2 秒"。
+        **首次建立缓存仍走 akshare 优先**（它给的区间最全，是深度补齐的主力），
+        所以口径与历史行为一致，只是"已经暖了"的基金换了更快的通道。
+        """
         ak_ok = not _AK_STATE["checked"] or _AK_STATE["ok"]
+        fast = ["eastmoney"]
+        deep = []
         if self.akshare_on and ak_ok:
-            chain.append("akshare")
+            deep.append("akshare")
         if self.token:
-            chain.append("zhitu")
-        chain.append("eastmoney")
+            deep.append("zhitu")
+        fast = fast + deep if warm else []
+        if warm:
+            return fast + (["eastmoney"] if "eastmoney" not in fast else [])
+        chain = deep + ["eastmoney"]
         return chain
 
-    def _count(self, kind):
-        today = util.today_str()
-        if kind == "zhitu":
-            self._zt_calls[today] = self._zt_calls.get(today, 0) + 1
-        elif kind == "akshare":
-            self._ak_calls[today] = self._ak_calls.get(today, 0) + 1
+    def _nav_cache_warm(self, code, need_from=None):
+        """该基金本地净值缓存是否**已经够深**（只差最近几天）——决定用哪条通道链。
+
+        判据：缓存最早日期 <= 需要的起始日（默认近 45 天），即"深度补齐已完成"。
+        """
+        try:
+            cache = util.load_json(self._nav_cache_path(code), {"items": {}})
+        except Exception:
+            return False
+        items = cache.get("items") or {}
+        if not items:
+            return False
+        need = need_from or util.add_days(util.today_str(), -45)
+        try:
+            return min(items) <= need
+        except Exception:
+            return False
+
+    def _nav_chain_effective(self):
+        """当前**实际会用到**的净值通道链（供降级判定）。
+
+        净值有两条链（见 `_nav_chain(warm=)`）：
+        * 缓存已深（warm）→ 东财优先的"快链"（增量，0.2s/只）；
+        * 缓存深度不足 → akshare 优先的"深链"（0.5~1.3s/只，负责补齐长历史）。
+
+        降级判定必须跟着**实际那条链**走，否则又会误报：只要有任意一只池内基金
+        已经"暖"了，日常就都在用东财，若判定表还写"首选 akshare"，界面就会一直
+        显示"基金净值 已降级"。这里按"池内缓存是否普遍够深"给出真实预期链。
+        """
+        try:
+            items = self._pool_items_for_chain()
+        except Exception:
+            items = []
+        warm_n = 0
+        for code in items[:12]:
+            try:
+                if self._nav_cache_warm(code):
+                    warm_n += 1
+            except Exception:
+                pass
+        warm = items and warm_n * 2 >= len(items[:12])
+        return tuple(self._nav_chain(warm=bool(warm)))
+
+    def _pool_items_for_chain(self):
+        """拿一批用于判断链路的基金代码（配置池优先，失败则用净值缓存里的代码）。"""
+        try:
+            pool = (self.cfg.get("pool") or [])
+            codes = [str(f.get("code")) for f in pool if f.get("code")]
+            if codes:
+                return codes
+        except Exception:
+            pass
+        try:
+            from . import cachestore
+            return cachestore.codes("nav_")[:12]
+        except Exception:
+            return []
+
+    # ---------------- 调用计数 / 降级状态（持久化，见 fundai/api_usage.py） ----------------
+    def _usage_chain(self):
+        """各用途的通道优先级（供 api_usage 判定「是否已降级」）。
+
+        必须与**实际实现**保持一致（判定表的语义是"首选可用即算正常"）：
+        nav 见 `_nav_chain_effective()`；quote 见 `indices_quote()` 的遍历顺序
+        （新浪→腾讯→东财）。
+        """
+        try:
+            return {
+                "nav": self._nav_chain_effective(),
+                "index_kline": (("zhitu", "eastmoney") if self.use_zhitu
+                                else ("eastmoney",)),
+                "quote": ("sina", "tencent", "eastmoney"),
+            }
+        except Exception:
+            return None
+
+    def _note(self, source, ok=True, error=None, purpose=None, limit=None):
+        """记一次网络尝试（成功/失败都算），失败原因交给 api_usage 截断打码。
+
+        计数失败绝不影响主流程（api_usage 内部已吞异常，这里再加一层保险）。
+        """
+        try:
+            api_usage.note(source, ok=bool(ok), error=error, purpose=purpose,
+                           limit=limit)
+        except Exception:
+            pass
+
+    def _note_limit(self, source):
+        """该来源的每日上限：只有智兔有配额（其余为 None=不限）。"""
+        return self._zt_limit if source == "zhitu" else None
 
     def usage(self):
-        today = util.today_str()
-        zt = self._zt_calls.get(today, 0)
-        ak = self._ak_calls.get(today, 0)
-        return {
-            "provider": self.provider_label(),
-            "calls_today": zt + ak,
-            "daily_limit": self._zt_limit if self.token else None,
-            "zhitu_today": zt,
-            "akshare_today": ak,
-        }
+        """数据源用量视图（**持久化**，进程重启不清零）。
+
+        返回字段
+        --------
+        旧字段（前端 app.js 已在用，保留语义不变）：
+          ``provider``      数据源标签（provider_label()）
+          ``calls_today``   今日全部通道的调用尝试次数（成功与失败都算）
+          ``daily_limit``   智兔每日上限；无 Token/无上限时为 None
+          ``zhitu_today``   今日智兔调用次数
+          ``akshare_today`` 今日 akshare 调用次数
+        新增字段：
+          ``date`` / ``ok_today`` / ``fail_today`` / ``remaining`` / ``exhausted``
+          ``sources``（每源明细：calls/ok/fail/limit/last_ok/last_fail/last_error）
+          ``by_source``（每源次数）/ ``sources_detail``（= sources）
+          ``yesterday`` / ``days``（最近 14 天）/ ``failover``（最近降级记录）
+          ``active``（各用途当前供货源）/ ``degraded`` / ``degraded_reason``
+          ``store`` / ``updated`` / ``snapshot``（api_usage.snapshot() 完整视图）
+
+        注意：``daily_limit`` 为 None 表示无上限（engine.py 用
+        ``daily_limit - calls_today`` 判断配额，None 时不做限制）。另外
+        ``calls_today`` 现在统计**全部通道**（含免费无配额的 akshare/东财/新浪/腾讯，
+        且失败也算），因此配额裕度判断会偏保守 —— 若需更精确的智兔口径，请用
+        ``zhitu_today``；``remaining`` 为 ``max(0, daily_limit - calls_today)``。
+        """
+        try:
+            return api_usage.usage_summary(
+                cfg=self.cfg, provider=self.provider_label(),
+                daily_limit=(self._zt_limit if self.token else None),
+                # **必须带 chain**：否则降级判定回落到 api_usage.CHAIN_DEFAULT，
+                # 而该默认表把 quote 的首选写成 eastmoney（实现其实是"新浪→腾讯→东财"），
+                # 于是"新浪正常供货"会被永久判成降级 —— 界面那条降级提示永远不消失。
+                chain=self._usage_chain())
+        except Exception as e:
+            # 极端兜底：计数存储彻底不可用时也不能让 state 接口崩
+            self.warnings.append("用量统计不可用：{}".format(str(e)[:120]))
+            return {
+                "provider": self.provider_label(), "calls_today": 0,
+                "daily_limit": (self._zt_limit if self.token else None),
+                "zhitu_today": 0, "akshare_today": 0,
+                "degraded": False, "active": {}, "failover": [],
+            }
+
+    def usage_snapshot(self):
+        """api_usage.snapshot() 的 Market 版本（Web 层可视用，含降级原因）。
+
+        补 ``chain``：按当前配置给出各用途通道优先级，snapshot 据此判定 degraded。
+        内部异常不会外抛 —— api_usage.snapshot() 自身容错，并把问题写进返回值的
+        ``error`` 字段（这里只兜底极端情况）。
+        """
+        try:
+            return api_usage.snapshot(cfg=self.cfg,
+                                      provider=self.provider_label(),
+                                      chain=self._usage_chain())
+        except Exception as e:
+            snap = api_usage.snapshot(cfg=self.cfg)
+            snap["error"] = str(e)[:160]
+            return snap
 
     # ---------------- 智兔工具 ----------------
-    def _zt_get(self, path, timeout=25):
-        """调用智兔接口并计数（不过量硬截断，只记录提示）。"""
+    def _zt_get(self, path, timeout=25, purpose=None):
+        """调用智兔接口：**每次尝试都计数**（成功与失败都算），并带配额上限。
+
+        旧实现只在成功返回后 +1，导致“失败请求”完全不计入用量（计数不准的根因之一）；
+        现在失败也会写入 api_usage（fail+1 并保存截断后的错误原因）。
+        limit 只有智兔有意义（= data.zhitu_daily_limit，默认 200）。
+        purpose: nav / index_kline / index_profile（非空时同时记为 active 供货源）。
+        """
         if not self.token:
+            self._note("zhitu", ok=False, error="未配置智兔 Token",
+                       purpose=purpose, limit=self._note_limit("zhitu"))
             raise DataError("未配置智兔 Token")
         url = ZT_BASE + path + ("&" if "?" in path else "?") + "token=" + self.token
-        js = util.http_get_json(url, timeout=timeout, tries=1)
-        today = util.today_str()
-        self._zt_calls[today] = self._zt_calls.get(today, 0) + 1
+        try:
+            js = util.http_get_json(url, timeout=timeout, tries=1)
+        except Exception as e:
+            self._note("zhitu", ok=False, error=e, purpose=purpose,
+                       limit=self._note_limit("zhitu"))
+            raise
+        self._note("zhitu", ok=True, purpose=purpose,
+                   limit=self._note_limit("zhitu"))
         return js
-    def _ak_nav_items(self, code):
+
+    def _ak_nav_items(self, code, purpose="nav"):
         """AKShare 场外基金全量净值 -> {date: nav}。
 
         区分“模块级故障”（未安装/接口字段消失 → 当天停用并直连兜底）与
         “单次网络抖动”（允许本次失败并尝试通道链里的下一家；连续失败才停用）。
+        每次尝试都计入 api_usage（akshare 无配额，limit=None）。
         """
         try:
             import akshare as ak
         except Exception as e:
             self._ak_ok = False
+            self._note("akshare", ok=False, purpose=purpose,
+                       error="AKShare 导入失败：{}".format(str(e)[:150]))
             raise DataError("AKShare 未安装或导入失败（已停用）：{}".format(
                 str(e)[:150]))
         if self._ak_ok is False:
+            self._note("akshare", ok=False, purpose=purpose,
+                       error="AKShare 模块异常/连续失败，已停用")
             raise DataError("AKShare 模块异常/连续失败，已停用（走智兔/东财兜底）")
         try:
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-        except ImportError:
+        except ImportError as e:
             self._ak_ok = False
+            self._note("akshare", ok=False, purpose=purpose,
+                       error="AKShare 接口实现缺失：{}".format(str(e)[:150]))
             raise DataError("AKShare 接口实现缺失（已停用）：{}".format(code))
         except Exception as e:
             self._ak_fail_streak += 1
             if self._ak_fail_streak >= 4:
                 self._ak_ok = False
+                self._note("akshare", ok=False, purpose=purpose,
+                           error="AKShare 连续 {} 次失败：{}".format(
+                               self._ak_fail_streak, str(e)[:150]))
                 raise DataError("AKShare 连续 {} 次失败，已停用（走智兔/东财兜底）：{}".format(
                     self._ak_fail_streak, str(e)[:150]))
+            self._note("akshare", ok=False, purpose=purpose,
+                       error="AKShare 瞬时失败({}/4)：{}".format(
+                           self._ak_fail_streak, str(e)[:150]))
             raise DataError("AKShare 基金净值瞬时失败({}/4，自动重试兜底通道)：{}：{}".format(
                 self._ak_fail_streak, code, str(e)[:150]))
         self._ak_ok = True
         self._ak_fail_streak = 0
-        self._count("akshare")
+        self._note("akshare", ok=True, purpose=purpose)
         date_col = next((c for c in ("净值日期", "date") if c in df.columns), None)
         nav_col = next((c for c in ("单位净值", "unit_nav") if c in df.columns), None)
         if date_col is None or nav_col is None:
@@ -278,15 +542,126 @@ class Market:
             raise DataError("智兔基金净值解析失败: {}".format(code))
         return sorted(out.items())
 
+    # ---------------- 一次调用的计数辅助（含嵌套调用的去重） ----------------
+    def _ping(self, source, ok=True, error=None, purpose=None):
+        """记“一次真实 HTTP 尝试”；本线程有计数上下文时只累加，不落盘。
+
+        上下文由 ``_source_call``（线程局部）建立 —— 这样“外层函数记一次汇总结果、
+        内层每页/每跳只累加”，既不会把一次逻辑调用记成几十次，也不会漏掉重试次数。
+        """
+        ctx = getattr(_CALL_CTX, "ctx", None)
+        if ctx is not None and ctx.get("source") == source:
+            ctx["attempts"] = int(ctx.get("attempts") or 0) + 1
+            if not ok:
+                err = str(error) if error not in (None, "") else "未知错误"
+                if not ctx.get("error"):
+                    ctx["error"] = err
+            return
+        self._note(source, ok=ok, error=error, purpose=purpose,
+                   limit=self._note_limit(source))
+
+    def _source_call(self, source, purpose=None):
+        """建立“一次逻辑调用”的计数上下文。
+
+        嵌套（如 ``_em_fund_history`` 内部调 ``_em_range``）时只返回字典，由外层
+        ``_source_call_end`` 统一写入一条记录（attempts 汇总 + 失败原因）。
+        """
+        ctx = getattr(_CALL_CTX, "ctx", None)
+        if ctx is not None and ctx.get("source") == source:
+            return ctx
+        return {"source": source, "purpose": purpose, "attempts": 0,
+                "error": None, "nested": False}
+
+    def _source_call_end(self, ctx, ok, error=None):
+        """结束一次逻辑调用：写一条汇总记录（attempts 次尝试 + ok/fail）。"""
+        if not isinstance(ctx, dict) or ctx.get("nested"):
+            return
+        err = str(error) if error not in (None, "") else ctx.get("error")
+        if not ok and not err:
+            err = "未知错误"
+        self._note(ctx.get("source"), ok=bool(ok), error=err,
+                   purpose=ctx.get("purpose"),
+                   limit=self._note_limit(ctx.get("source")))
+
+    @contextmanager
+    def _call_ctx(self, source, purpose=None):
+        """``with m._call_ctx("eastmoney", "nav"):`` —— 退出时按成败写一条记录。
+
+        用于**嵌套调用**（如 ``_em_fund_history`` 内部依次调 ``_em_range`` 与
+        ``_em_deep_pingzhong``）：把多次 HTTP 尝试汇总成一条记录，避免一次逻辑调用
+        被记成十几次（分页）。
+        """
+        ctx = self._source_call(source, purpose)
+        prev = getattr(_CALL_CTX, "ctx", None)
+        _CALL_CTX.ctx = ctx
+        try:
+            yield ctx
+        except Exception as e:
+            _CALL_CTX.ctx = prev
+            self._source_call_end(ctx, False, e)
+            raise
+        else:
+            _CALL_CTX.ctx = prev
+            self._source_call_end(ctx, True)
+
+    def _try_provider(self, purpose, prov, fn):
+        """按通道链试一家：成功返回 ``(结果, None)``，失败返回 ``(None, 错误)``。
+
+        失败时记 ``note_failover``（from=prov，to=链里的下一家）——**降级可视**；
+        成功时记 ``note_active``（这次是谁供货的）。
+        """
+        try:
+            res = fn()
+        except Exception as e:          # 网络/解析异常都按“该通道失败”处理并计数
+            try:
+                chain = list((self._usage_chain() or {}).get(purpose) or [])
+                nxt = chain[chain.index(prov) + 1] if prov in chain and \
+                    chain.index(prov) + 1 < len(chain) else None
+                api_usage.note_failover(purpose, prov, nxt, str(e)[:180])
+            except Exception:
+                pass
+            return None, e
+        try:
+            api_usage.note_active(purpose, prov)
+        except Exception:
+            pass
+        return res, None
+
     def _em_range(self, code, start, end):
-        """东财 lsjz 区间分页（每页上限 20），返回 {date: nav}。"""
+        """东财 lsjz 区间分页（每页上限 20），返回 {date: nav}。
+
+        计数：整段分页算“一次逻辑调用”，真实请求次数（含重试）走 _ping 累加；
+        任何失败（某页网络错误、整体为空）都记为该次调用失败。
+        """
+        ctx = self._source_call("eastmoney", "nav")
+        prev = getattr(_CALL_CTX, "ctx", None)
+        _CALL_CTX.ctx = ctx
+        try:
+            out = self._em_range_raw(code, start, end)
+        except Exception as e:
+            _CALL_CTX.ctx = prev
+            ctx["attempts"] = max(1, int(ctx.get("attempts") or 0))
+            self._source_call_end(ctx, False, e)
+            raise
+        _CALL_CTX.ctx = prev
+        ctx["attempts"] = max(1, int(ctx.get("attempts") or 0))
+        self._source_call_end(ctx, True)
+        return out
+
+    def _em_range_raw(self, code, start, end):
+        """[内部] 东财 lsjz 分页实现，每页请求前后各 _ping 一次（成功/失败都计数）。"""
         if start > end:
             return {}
         out, page, total = {}, 1, None
         while True:
             url = ("{}?fundCode={}&pageIndex={}&pageSize=20&startDate={}"
                    "&endDate={}".format(EA_NAV_URL, code, page, start, end))
-            js = util.http_get_json(url, headers=EA_NAV_HEADERS, timeout=15)
+            self._ping("eastmoney")
+            try:
+                js = util.http_get_json(url, headers=EA_NAV_HEADERS, timeout=15)
+            except Exception as e:
+                self._ping("eastmoney", ok=False, error=e)
+                raise
             rows = ((js.get("Data") or {}).get("LSJZList")) or []
             if not rows:
                 break
@@ -308,7 +683,30 @@ class Market:
         return out
 
     def _em_deep_pingzhong(self, code):
-        txt = util.http_get_text(EA_PINGZHONG.format(code=code), timeout=20)
+        """东财 pingzhongdata 深度补齐：记一次 eastmoney 调用（失败带原因）。"""
+        ctx = self._source_call("eastmoney", "nav")
+        prev = getattr(_CALL_CTX, "ctx", None)
+        _CALL_CTX.ctx = ctx
+        try:
+            out = self._em_deep_pingzhong_raw(code)
+        except Exception as e:
+            _CALL_CTX.ctx = prev
+            ctx["attempts"] = max(1, int(ctx.get("attempts") or 0))
+            self._source_call_end(ctx, False, e)
+            raise
+        _CALL_CTX.ctx = prev
+        ctx["attempts"] = max(1, int(ctx.get("attempts") or 0))
+        self._source_call_end(ctx, True)
+        return out
+
+    def _em_deep_pingzhong_raw(self, code):
+        """[内部] pingzhongdata 抓取与解析（一次 HTTP 尝试，成败都计数）。"""
+        self._ping("eastmoney")
+        try:
+            txt = util.http_get_text(EA_PINGZHONG.format(code=code), timeout=20)
+        except Exception as e:
+            self._ping("eastmoney", ok=False, error=e)
+            raise
         m = re.search(r"Data_netWorthTrend\s*=\s*(\[.*?\]);", txt)
         if not m:
             raise DataError("pingzhongdata 解析失败: fund={}".format(code))
@@ -335,20 +733,22 @@ class Market:
         online = True
         deep_ok = (cache_min is not None and cache_min <= need)
         if need_refresh:
-            try:
-                fresh = self._em_range(code, util.add_days(today, -9), today)
-                items.update(fresh)
-                self._fresh_ts[code] = time.time()
-                if not deep_ok:
-                    try:
-                        items.update(self._em_deep_pingzhong(code))
-                        deep_ok = True
-                    except DataError:
-                        old = self._em_range(code, need, today)
-                        items.update(old)
-                        deep_ok = bool(old) and min(old) <= need
-            except DataError:
-                online = False
+            # 一次逻辑调用（含“近端区间 + 深度补齐”两次东财请求）：汇总成一条计数
+            with self._call_ctx("eastmoney", "nav"):
+                try:
+                    fresh = self._em_range(code, util.add_days(today, -9), today)
+                    items.update(fresh)
+                    self._fresh_ts[code] = time.time()
+                    if not deep_ok:
+                        try:
+                            items.update(self._em_deep_pingzhong(code))
+                            deep_ok = True
+                        except DataError:
+                            old = self._em_range(code, need, today)
+                            items.update(old)
+                            deep_ok = bool(old) and min(old) <= need
+                except DataError:
+                    online = False
         if online and need_refresh:
             util.save_json(self._nav_cache_path(code),
                            {"updated": util.now_iso(), "items": items})
@@ -390,26 +790,24 @@ class Market:
 
         if force_live:
             last_err = None
-            for prov in self._nav_chain():
-                try:
-                    if prov == "akshare":
-                        got = self._ak_nav_items(code)
-                    elif prov == "zhitu":
-                        got = {d: n for d, n in self._zt_fund_navs(code)}
-                    else:  # eastmoney
-                        got = {d: n for d, n in self._em_fund_history(
-                            code, need_from=need)}
-                    if got:
-                        items.update(got)
-                        util.save_json(self._nav_cache_path(code),
-                                       {"updated": util.now_iso(),
-                                        "items": items})
-                        self._fresh_ts[code] = time.time()
-                        return _serve()
-                except DataError as e:
-                    last_err = e
+            for prov in self._nav_chain(warm=self._nav_cache_warm(code, need)):
+                got, err = self._try_provider("nav", prov, lambda p=prov: (
+                    self._ak_nav_items(code) if p == "akshare" else
+                    ({d: n for d, n in self._zt_fund_navs(code)} if p == "zhitu"
+                     else {d: n for d, n in self._em_fund_history(
+                         code, need_from=need)})))
+                if err is not None:
+                    last_err = err
                     self.warnings.append("净值通道 {} 失败({})：{}".format(
-                        prov, code, e))
+                        prov, code, err))
+                    continue
+                if got:
+                    items.update(got)
+                    util.save_json(self._nav_cache_path(code),
+                                    {"updated": util.now_iso(),
+                                     "items": items})
+                    self._fresh_ts[code] = time.time()
+                    return _serve()
             if cache_ok:
                 self.warnings.append("{} 在线刷新失败，使用本地缓存".format(code))
                 return _serve()
@@ -425,24 +823,24 @@ class Market:
         if cache_ok and (ttl_ok or self._cache_is_fresh(cache)):
             return _serve()
         last_err = None
-        for prov in self._nav_chain():
-            try:
-                if prov == "akshare":
-                    got = self._ak_nav_items(code)
-                elif prov == "zhitu":
-                    got = {d: n for d, n in self._zt_fund_navs(code)}
-                else:  # eastmoney（增量 + pingzhong 兜底）
-                    got = {d: n for d, n in self._em_fund_history(code,
-                                                                  need_from=need)}
-                if got:
-                    items.update(got)
-                    util.save_json(self._nav_cache_path(code),
-                                   {"updated": util.now_iso(), "items": items})
-                    self._fresh_ts[code] = time.time()
-                    return _serve()
-            except DataError as e:
-                last_err = e
-                self.warnings.append("净值通道 {} 失败({})：{}".format(prov, code, e))
+        # 缓存已深（warm）→ 用"东财优先"的快链做增量；否则先用 akshare 建深度
+        chain = self._nav_chain(warm=(cache_ok and not ttl_ok))
+        for prov in chain:
+            got, err = self._try_provider("nav", prov, lambda p=prov: (
+                self._ak_nav_items(code) if p == "akshare" else
+                ({d: n for d, n in self._zt_fund_navs(code)} if p == "zhitu"
+                 else {d: n for d, n in self._em_fund_history(code,
+                                                              need_from=need)})))
+            if err is not None:
+                last_err = err
+                self.warnings.append("净值通道 {} 失败({})：{}".format(prov, code, err))
+                continue
+            if got:
+                items.update(got)
+                util.save_json(self._nav_cache_path(code),
+                               {"updated": util.now_iso(), "items": items})
+                self._fresh_ts[code] = time.time()
+                return _serve()
         if cache_ok:
             self.warnings.append("{} 使用本地缓存（在线通道均失败）".format(code))
             return _serve()
@@ -452,20 +850,101 @@ class Market:
         seq = self.fund_history(code, force_live=force_live)
         return seq[-1] if seq else (None, None)
 
+    def nav_is_fresh(self, code):
+        """该基金净值是否"现在不必联网"（进程内判据，零磁盘 I/O）。
+
+        供 `Engine.nav_latest_map` 给基金分类：新鲜的直接走内存/磁盘缓存，
+        只有不新鲜的才铺线程池联网。这样 15 分钟内的多次首页刷新几乎不碰网络。
+
+        判据：`fund_history` 内部用的两条路径——内存 `_fresh_ts`（本次进程内已联网
+        拉过）与磁盘 `_cache_is_fresh`（已有覆盖最近应公布交易日的缓存）——任一成立
+        即视为新鲜。**读盘结果按 (mtime, size) 记忆 20 秒**，避免每只基金每次刷新
+        都重新读一遍 60~80KB 的 nav JSON（100 只基金 × 每秒读 = 纯浪费）。
+        """
+        if os.environ.get("FUNDAI_NAV_FRESH_CACHE", "1") in ("0", "false"):
+            # 关闭记忆：每次都真读盘判定（调试/对比用）
+            p = self._nav_cache_path(code)
+            return bool(self._cache_is_fresh(util.load_json(p, {"items": {}})))
+        ts = self._fresh_ts.get(code, 0)
+        if ts + ZT_FRESH_TTL > time.time():
+            return True
+        p = self._nav_cache_path(code)
+        memo = self._fresh_memo.get(code)
+        now = time.time()
+        try:
+            st = os.stat(str(p))
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return False
+        if memo and memo[0] == sig and now - memo[1] < 20:
+            return memo[2]
+        cache = util.load_json(p, {"items": {}})
+        fresh = bool(self._cache_is_fresh(cache))
+        self._fresh_memo[code] = (sig, now, fresh)
+        return fresh
+
+    def nav_batch_latest(self, codes, jobs=8):
+        """批量取"池内基金最新净值"：{code: (date, nav)}。
+
+        与 `Engine.nav_latest_map` 同一套"先吃新鲜缓存、再并行联网"的策略，
+        供研究脚本/审计一次性预热多只基金时复用（避免脚本里再写一遍线程池）。
+        """
+        codes = [c for c in dict.fromkeys(codes) if c]
+        out = {}
+        todo = []
+        for c in codes:
+            if self.nav_is_fresh(c):
+                try:
+                    d, nav = self.fund_latest(c)
+                except DataError:
+                    d = None
+                if d:
+                    out[c] = (d, nav)
+            else:
+                todo.append(c)
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _one(c):
+                try:
+                    d, nav = self.fund_latest(c)
+                    return c, (d, nav) if d else None
+                except Exception:
+                    return c, None
+            n = max(1, min(int(jobs or 8), len(todo)))
+            if n == 1:
+                pairs = [_one(c) for c in todo]
+            else:
+                with ThreadPoolExecutor(max_workers=n) as ex:
+                    pairs = list(ex.map(_one, todo))
+            for c, pair in pairs:
+                if pair:
+                    out[c] = pair
+        return out
+
     def fund_name(self, code):
+        """基金名称（缓存优先）。在线兜底通道也计数：zhitu(index_profile)/eastmoney。"""
         meta = util.load_json(util.cache_file("fund_meta.json"), {})
         if code in meta and meta[code].get("name"):
             return meta[code]["name"]
         name = code
         try:
             if self.use_zhitu:
-                js = self._zt_get(ZT_PROFILE.format(code=code), timeout=15)
+                js = self._zt_get(ZT_PROFILE.format(code=code), timeout=15,
+                                  purpose="index_profile")
                 name = js.get("jc") or js.get("qc") or code
             else:
-                txt = util.http_get_text(EA_PINGZHONG.format(code=code), timeout=15)
-                m = re.search(r'fS_name\s*=\s*"([^"]+)"', txt)
-                if m:
-                    name = m.group(1)
+                with self._call_ctx("eastmoney", "index_profile"):
+                    self._ping("eastmoney")
+                    try:
+                        txt = util.http_get_text(EA_PINGZHONG.format(code=code),
+                                                 timeout=15)
+                    except Exception as e:
+                        self._ping("eastmoney", ok=False, error=e)
+                        raise
+                    m = re.search(r'fS_name\s*=\s*"([^"]+)"', txt)
+                    if m:
+                        name = m.group(1)
         except DataError:
             pass
         meta[code] = {"name": name, "updated": util.now_iso()}
@@ -477,6 +956,62 @@ class Market:
     def _kline_cache_path(dm_or_secid):
         safe = re.sub(r"[^0-9A-Za-z]", "_", str(dm_or_secid))
         return util.cache_file("kline_{}.json".format(safe))
+
+    def _index_cache_items(self):
+        """主基准指数的本地K线：合并**两个可能存在的缓存键**后返回 {date: [close, vol]}。
+
+        为什么合并（2026-09-11 数据事故的加固）：主指数在不同代码路径下会落到
+        两个缓存文件——`kline_<智兔代码>.json`（`_index_key()`，use_zhitu 时）
+        与 `kline_<东财 secid>.json`（兜底/跨市场通道）。事故中其中一份被
+        兜底结果覆盖、另一份一度缺失，导致 `calib.load_closes()` 直接归零、
+        所有基于指数历史的校准与回测一起失效。现在读取时取两边的**并集**
+        （同一日期取先出现者），任一份存活即可继续工作。
+        """
+        keys = [self._index_key()]
+        secid = (self.cfg.get("market", {}).get("index", {}) or {}).get(
+            "eastmoney_secid")
+        if secid and str(secid) not in keys:
+            keys.append(str(secid))
+        merged = {}
+        for k in keys:
+            try:
+                # 只读磁盘缓存文件：本函数是"缓存键合并"逻辑，必须反映**这一份缓存文件**
+                # 的真实内容；发布快照的 cache.db 由 `index_history` 的默认路径覆盖，
+                # 这里若也回退到库，会把"缓存被临时重定向到别处"的离线用例前提破坏掉。
+                items = ((util.load_json(self._kline_cache_path(k), {},
+                                         use_cache_db=False) or {})
+                         .get("items") or {})
+            except Exception:
+                continue
+            for d, v in items.items():
+                merged.setdefault(d, v)
+        return merged
+
+    def _kline_save(self, path, items, updated=None):
+        """把K线缓存写回磁盘：与已有数据**取并集**，并拒绝"越写越少"。
+
+        2026-09-11 事故（本项目最严重的一次数据损坏）：智兔失败走东财兜底时，
+        兜底接口只返回一小段区间，旧代码直接 `save_json(path, {"items": items})`
+        **覆盖**了原缓存 —— 沪深300 的长历史从 2673 根被截成 ~40 根
+        （文件 143KB → 2KB），`calib.load_closes()` 随之归零，所有基于
+        指数历史的校准/回测一起失效。现在：① 先合并磁盘上已有 bar；
+        ② 若并集反而比原文件少（正常不可能），直接拒绝写入并告警。
+        """
+        old = dict(((util.load_json(path, {}) or {}).get("items")) or {})
+        if old:
+            for k, v in old.items():
+                items.setdefault(k, v)
+        if old and len(items) < len(old) * 0.5:
+            try:
+                api_usage.note("eastmoney", ok=False,
+                               error="拒绝写入：缓存并集 {} < 已有 {} 的一半"
+                                     .format(len(items), len(old)))
+            except Exception:
+                pass
+            return False
+        util.save_json(path, {"updated": updated or util.now_iso(),
+                              "items": items})
+        return True
 
     @staticmethod
     def _bar_is_final(updated):
@@ -505,10 +1040,17 @@ class Market:
 
     @staticmethod
     def _trading_today():
-        """今天是否(近似)交易日：已注册日历时查日历，否则工作日近似。"""
+        """今天是否(近似)交易日。
+
+        日历尚未覆盖到今天（K线缓存滞后于当日）时，必须退回工作日近似：
+        否则形成死锁——“今天要不要抓”依赖日历，而日历只能靠抓取更新，
+        常驻服务自缓存那天起就永远拉不到新交易日（2026-09-10 研判卡死在
+        09-09 的根因）。日历覆盖到当日时精确查日历；节假日误判只会多一次
+        空请求（接口没有当日 bar → 缓存不变），无副作用。
+        """
         cal = util.calendar_dates()
         today = util.today_str()
-        if cal:
+        if cal and min(cal) <= today <= max(cal):
             return today in cal
         return util.is_weekday(today)
 
@@ -589,7 +1131,11 @@ class Market:
                 continue
         return out
 
-    def _parse_eastmoney_quote(self, items):
+    def _parse_eastmoney_quote(self, items, errors=None):
+        """东财行情：成功返回 {code: {...}}；失败返回 {} 并把原因写入 errors。
+
+        计数由调用方 ``indices_quote`` 统一负责（每次调用一笔），这里不重复计数。
+        """
         secids = ",".join(it["secid"] for it in items)
         url = ("{}?fltt=2&invt=2&fields={}&secids={}".format(
             EA_QUOTE_URL, EA_QUOTE_FIELDS, secids))
@@ -598,7 +1144,9 @@ class Market:
                                 timeout=8, tries=1)
             js = json.loads(raw.decode("gb18030", errors="replace"))
             diff = (((js.get("data") or {}).get("diff")) or [])
-        except Exception:
+        except Exception as e:
+            if errors is not None:
+                errors["error"] = str(e)
             return {}
         out = {}
         for d in diff:
@@ -614,11 +1162,41 @@ class Market:
                 continue
         return out
 
+    def _quote_provider(self, prov, codes, items):
+        """实时行情单通道：成功返回 (parsed, None)，失败返回 ({}, 错误)。
+
+        计数由调用方 ``indices_quote`` 统一负责（每个被尝试的通道一笔），
+        这里只做请求与解析。
+        """
+        err = None
+        try:
+            if prov == "sina":
+                b = util.http_get(SINA_QUOTE_URL.format(codes=codes),
+                                  headers={"Referer": SINA_QUOTE_REFERER},
+                                  timeout=8, tries=1)
+                parsed = self._parse_sina(b, items)
+            elif prov == "tencent":
+                b = util.http_get(TENCENT_QUOTE_URL.format(codes=codes),
+                                  headers={"Referer": TENCENT_QUOTE_REFERER},
+                                  timeout=8, tries=1)
+                parsed = self._parse_tencent(b, items)
+            else:  # eastmoney
+                box = {}
+                parsed = self._parse_eastmoney_quote(items, box)
+                err = box.get("error")
+            if not parsed and not err:
+                err = "{} 行情返回空/解析为空".format(prov)
+        except Exception as e:
+            return {}, str(e)
+        return parsed, err
+
     def indices_quote(self, force=False):
         """拉取一组大盘指数实时行情（新浪 → 腾讯 → 东财，带进程内短缓存）。
 
         返回 [{code, name, price, chg_pct, chg_amt, benchmark}]；失败返回 []。
         chg_pct 为小数（-0.003 表示 -0.30%），chg_amt 为涨跌点/额。
+        计数：每个被尝试的通道各记一笔（失败带原因）；发生通道切换时记
+        ``note_failover(purpose="quote")``，供货成功的通道记 ``note_active``。
         """
         items = self._indices_cfg()
         if not items:
@@ -629,23 +1207,18 @@ class Market:
             return self._idx_quote
         codes = ",".join(self._quote_codes(items))
         parsed = {}
-        try:
-            b = util.http_get(SINA_QUOTE_URL.format(codes=codes),
-                              headers={"Referer": SINA_QUOTE_REFERER},
-                              timeout=8, tries=1)
-            parsed = self._parse_sina(b, items)
-        except DataError:
-            parsed = {}
-        if not parsed:
-            try:
-                b = util.http_get(TENCENT_QUOTE_URL.format(codes=codes),
-                                  headers={"Referer": TENCENT_QUOTE_REFERER},
-                                  timeout=8, tries=1)
-                parsed = self._parse_tencent(b, items)
-            except DataError:
-                parsed = {}
-        if not parsed:
-            parsed = self._parse_eastmoney_quote(items)
+        for prov in ("sina", "tencent", "eastmoney"):
+            got, err = self._quote_provider(prov, codes, items)
+            self._note(prov, ok=err is None, error=err, purpose="quote",
+                       limit=self._note_limit(prov))
+            if err is None:
+                parsed = got
+                try:
+                    api_usage.note_active("quote", prov)
+                except Exception:
+                    pass
+                break
+            self._warn_failover("quote", prov, err)
         if not parsed:
             return self._idx_quote if self._idx_quote is not None else []
         out = []
@@ -666,11 +1239,443 @@ class Market:
         self._idx_quote_ts = now
         return out
 
-    def _zt_index_history(self, start, end):
+    def index_intraday(self, secid=None, force=False):
+        """基准指数**当日分时**：{ok, name, price, chg_pct, pre_close,
+        points:[{t,price,vol}], high, low, source}
+
+        数据源（2026-09-15 实测选定）：
+          1. 新浪 `CN_MarketDataService.getKLineData`（scale=5）—— 5 分钟线、稳定；
+          2. 兜底腾讯 `web.ifzq.gtimg.cn/.../mkline`（部分网络 DNS 不通，故不首选）。
+        用途：主界面"今日分时"组件 —— 盘中持续更新，让首页看得出"现在大盘在干什么"，
+        而不只有一个收盘涨跌幅。进程内缓存 60 秒，前端轮询不重复打网络。
+        计数：每次在线尝试记为 ``purpose="quote"``（与实时行情同一笔账）。
+        """
+        secid = str(secid or (self.cfg.get("market", {}).get("index", {}) or {})
+                    .get("eastmoney_secid") or "1.000300")
+        parts = secid.split(".")
+        mk = parts[0] if parts else "1"
+        code6 = parts[1] if len(parts) > 1 else "000300"
+        sym = ("sh" if mk == "1" else "sz") + code6
+        now = time.time()
+        ck = "intraday:" + secid
+        hit = self._aux_cache.get(ck)
+        if hit and not force and now - hit[0] < 60:
+            return hit[1]
+        out = {"ok": False, "name": None, "price": None, "chg_pct": None,
+               "pre_close": None, "points": [], "high": None, "low": None,
+               "source": None, "date": util.today_str(), "message": None}
+
+        def _finish(points, source):
+            if not points:
+                return False
+            prices = [p["price"] for p in points]
+            out.update({"ok": True, "points": points, "source": source,
+                        "high": max(prices), "low": min(prices),
+                        "price": prices[-1]})
+            return True
+
+        # ---- 1) 新浪 5 分钟线 ----
+        try:
+            raw = util.http_get_text(SINA_MINLINE.format(sym=sym),
+                                     headers={"Referer": SINA_QUOTE_REFERER},
+                                     timeout=8)
+            self._note("sina", ok=True, purpose="quote",
+                       limit=self._note_limit("sina"))
+            js = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
+            rows = [r for r in (js or []) if isinstance(r, dict)]
+            if rows:
+                day = str(rows[-1].get("day") or "")[:10]
+                pts = []
+                for r in rows:
+                    if str(r.get("day") or "")[:10] != day:
+                        continue                      # 只留最新一天
+                    try:
+                        pts.append({"t": str(r["day"])[11:16],
+                                    "price": round(float(r["close"]), 2),
+                                    "vol": float(r.get("volume") or 0)})
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                if _finish(pts, "sina"):
+                    out["date"] = day
+        except Exception as e:
+            try:
+                self._note("sina", ok=False, purpose="quote", error=e,
+                           limit=self._note_limit("sina"))
+            except Exception:
+                pass
+            out["message"] = "新浪分时不可用：{}".format(str(e)[:70])
+        # ---- 2) 腾讯 5 分钟线兜底 ----
+        if not out["ok"]:
+            try:
+                raw = util.http_get_text(TENCENT_MKLINE.format(sym=sym),
+                                         headers={"Referer": TENCENT_QUOTE_REFERER},
+                                         timeout=8)
+                self._note("tencent", ok=True, purpose="quote",
+                           limit=self._note_limit("tencent"))
+                js = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+                node = (((js.get("data") or {}).get(sym) or {}).get("m5") or [])
+                pts = []
+                for row in node[-120:]:
+                    try:
+                        t = str(row[0])
+                        pts.append({"t": "{}:{}".format(t[8:10], t[10:12]),
+                                    "price": round(float(row[2]), 2),
+                                    "vol": float(row[5]) if len(row) > 5 else 0.0})
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                _finish(pts, "tencent")
+            except Exception as e:
+                out["message"] = (out.get("message") or "") + \
+                    "；腾讯分时不可用：{}".format(str(e)[:60])
+        # ---- 昨收/涨跌幅：并入实时行情（首页同一次请求里已缓存，零额外成本）----
+        try:
+            for q in (self.indices_quote() or []):
+                if str(q.get("code")) == code6:
+                    out["name"] = q.get("name")
+                    out["chg_pct"] = q.get("chg_pct")
+                    if out.get("price") is None:
+                        out["price"] = q.get("price")
+                    if q.get("price") is not None and q.get("chg_amt") is not None:
+                        out["pre_close"] = round(
+                            float(q["price"]) - float(q["chg_amt"]), 2)
+                    break
+        except Exception:
+            pass
+        self._aux_cache[ck] = (now, out)
+        return out
+
+    def market_overview(self, force=False, background=False):
+        """大盘概览（主界面用）：涨跌家数 / 涨跌停 / 成交额 / 交易时段。
+
+        数据源（2026-09-15 实测选定，见 `_fetch_overview`）：
+          新浪行情中心 `Market_Center.getHQNodeData` 分页拉全市场 → 一行行统计。
+        取数策略（**首页必须秒回**）：
+          1. 有缓存（TTL 5 分钟，盘中）→ 直接返回；
+          2. 没有缓存且 `background=False` → 先返回空壳 + `warming=True`，
+             后台线程去拉（前端 2 秒后重试一次即可看到数据）；
+          3. `background=True`（预热线程自己调）→ 同步拉取并写缓存。
+        全部失败时返回 ok=False + 原因，界面显示"暂不可用"，绝不抛。
+        """
+        now = time.time()
+        hit = self._aux_cache.get("overview")
+        if hit and not force and now - hit[0] < OVERVIEW_TTL:
+            return hit[1]
+        if not background and not force:
+            self._start_overview_warm()
+            if hit:
+                return hit[1]
+            return {"ok": False, "warming": True, "date": util.today_str(),
+                    "phase": _session_phase(), "rise": None, "fall": None,
+                    "flat": None, "zt": None, "dt": None, "amount_yi": None,
+                    "source": None, "indices": [], "message": "首次统计中…"}
+        # 取数链（实测排序）：腾讯榜单最快最全 → 东财计数法 → 新浪分页 → 当日快照
+        out = self._fetch_overview_tencent()
+        if not out.get("ok"):
+            out = self._fetch_overview_eastmoney()
+        if not out.get("ok"):
+            out = self._fetch_overview(full=False)
+        if out.get("ok"):
+            self._aux_cache["overview"] = (time.time(), out)
+            self._save_overview_snapshot(out)
+            return out
+        if hit:
+            return hit[1]
+        snap = self._load_overview_snapshot()
+        if snap:
+            self._aux_cache["overview"] = (time.time(), snap)
+            return snap
+        return out
+
+    def _start_overview_warm(self):
+        """后台预热大盘概览（同一时刻只跑一个）。"""
+        if self._ov_thread and self._ov_thread.is_alive():
+            return
+        def _work():
+            # 两段式：先拿够用的样本让界面立刻有数，再后台补全全市场替换掉
+            fast = {}
+            try:
+                fast = self._fetch_overview_tencent()
+                if not fast.get("ok"):
+                    fast = self._fetch_overview_eastmoney()
+                if fast.get("ok"):
+                    self._aux_cache["overview"] = (time.time(), fast)
+                    self._save_overview_snapshot(fast)
+            except Exception:
+                pass
+            try:
+                fast = self._fetch_overview(full=False)
+                if fast.get("ok"):
+                    self._aux_cache["overview"] = (time.time(), fast)
+                    self._save_overview_snapshot(fast)
+            except Exception:
+                pass
+            try:
+                # 已有全市场样本（腾讯 4600+）就没必要再翻新浪分页；样本不足才补齐
+                if (fast.get("samples") or 0) >= 3000:
+                    return
+                full = self._fetch_overview(full=True)
+                if full.get("ok") and (full.get("samples") or 0) >= (fast.get("samples") or 0):
+                    self._aux_cache["overview"] = (time.time(), full)
+                    self._save_overview_snapshot(full)
+            except Exception:
+                pass
+        import threading
+        self._ov_thread = threading.Thread(target=_work, daemon=True)
+        self._ov_thread.start()
+
+    def _fetch_overview_eastmoney(self):
+        """东财**计数法**取大盘家数：4 次单行查询，快且不会被限流。
+
+        返回 dict（与 `_fetch_overview` 同构；失败时 ok=False）。约 0.6~1.0s。
+        """
+        out = {"ok": False, "date": util.today_str(), "phase": _session_phase(),
+               "rise": None, "fall": None, "flat": None, "zt": None, "dt": None,
+               "amount_yi": None, "source": None, "message": None,
+               "indices": [], "asof": util.now_iso(), "samples": None,
+               "errors": [], "method": "eastmoney-count"}
+
+        def _total(extra):
+            """按筛选条件取 total（只回 1 行，代价极小）。"""
+            url = (EA_COUNT_URL + "&" + extra)
+            raw = util.http_get(url, headers={
+                "Referer": "https://quote.eastmoney.com/"}, timeout=10, tries=2)
+            js = json.loads(raw.decode("utf-8", "replace"))
+            d = js.get("data") or {}
+            self._note("eastmoney", ok=True, purpose="quote",
+                       limit=self._note_limit("eastmoney"))
+            return int(d.get("total") or 0), d
+
+        try:
+            up, d0 = _total("fid=f3&po=1&fs=" + EA_ALL_A)
+            down, _ = _total("fid=f3&po=0&fs=" + EA_ALL_A)
+            zt, _ = _total("fid=f3&po=1&fs=" + EA_ALL_A + "&f3>=" + str(EA_LIMIT_PCT))
+            dt_, _ = _total("fid=f3&po=0&fs=" + EA_ALL_A + "&f3<=" + str(-EA_LIMIT_PCT))
+        except Exception as e:
+            out["message"] = "东财计数源不可用：{}".format(str(e)[:80])
+            out["errors"].append(str(e)[:80])
+            return out
+        # 东财 total 是全市场匹配数：上涨/下跌两数之差即"平盘"近似
+        flat = 0
+        total_a = None
+        try:
+            total_a = int((d0 or {}).get("total") or 0) or None
+        except Exception:
+            total_a = None
+        out.update({"ok": True, "rise": up, "fall": down, "flat": flat,
+                    "zt": zt, "dt": dt_, "source": "eastmoney",
+                    "samples": (up + down) or None})
+        tot = up + down
+        if tot:
+            out["breadth"] = round(up / float(tot), 4)
+            out["limit_up_ratio"] = round(zt / float(tot), 4)
+        return out
+
+    def _fetch_overview_tencent(self):
+        """腾讯榜单通道：并发翻页取全市场 A 股，按涨跌幅统计家数。约 2 秒。"""
+        import json as _json
+        out = {"ok": False, "date": util.today_str(), "phase": _session_phase(),
+               "rise": None, "fall": None, "flat": None, "zt": None, "dt": None,
+               "amount_yi": None, "source": None, "message": None,
+               "indices": [], "asof": util.now_iso(), "samples": None,
+               "errors": [], "method": "tencent-rank"}
+        per = 200
+        headers = {"Referer": "https://gu.qq.com/"}
+
+        def _page(off):
+            try:
+                raw = util.http_get_text(
+                    TENCENT_RANK.format(offset=off, count=per),
+                    headers=headers, timeout=12)
+                js = _json.loads(raw)
+                lst = ((js.get("data") or {}).get("rank_list")) or []
+                return lst if isinstance(lst, list) else []
+            except Exception:
+                return []
+
+        pages = int(TENCENT_RANK_PAGES)
+        rows = []
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                for lst in ex.map(_page, [i * per for i in range(pages)]):
+                    rows.extend(lst)
+        except Exception:
+            for i in range(pages):
+                rows.extend(_page(i * per))
+        if not rows:
+            out["message"] = "腾讯榜单无返回"
+            return out
+        self._note("tencent", ok=True, purpose="quote",
+                   limit=self._note_limit("tencent"))
+        rise = fall = flat = zt = dt = 0
+        amount = 0.0
+        for r in rows:
+            try:
+                pct = float(r.get("zdf"))
+            except (TypeError, ValueError):
+                continue
+            if pct > 0.01:
+                rise += 1
+            elif pct < -0.01:
+                fall += 1
+            else:
+                flat += 1
+            if pct >= EA_LIMIT_PCT:
+                zt += 1
+            elif pct <= -EA_LIMIT_PCT:
+                dt += 1
+            try:
+                amount += float(r.get("turnover") or 0)     # 万元
+            except (TypeError, ValueError):
+                pass
+        tot = rise + fall + flat
+        out.update({"ok": True, "rise": rise, "fall": fall, "flat": flat,
+                    "zt": zt, "dt": dt, "source": "tencent",
+                    "samples": tot,
+                    "amount_yi": round(amount / 1e4, 1) if amount else None})
+        if tot:
+            out["breadth"] = round(rise / float(tot), 4)
+            out["limit_up_ratio"] = round(zt / float(tot), 4)
+        return out
+
+    def _save_overview_snapshot(self, out):
+        """把成功的大盘概览落盘（统计源失败时的兜底快照）。"""
+        try:
+            util.save_json(util.cache_file(OVERVIEW_SNAPSHOT),
+                           dict(out, saved_at=util.now_iso(),
+                                saved_at_ts=time.time()))
+        except Exception:
+            pass
+
+    def _load_overview_snapshot(self):
+        """读上一次成功的大盘概览快照；非当日或超过 6 小时视为过期。"""
+        try:
+            js = util.load_json(util.cache_file(OVERVIEW_SNAPSHOT), {})
+        except Exception:
+            return None
+        if not js or not js.get("ok"):
+            return None
+        if (js.get("date") or "") != util.today_str():
+            return None
+        try:
+            age = time.time() - float(js.get("saved_at_ts") or 0)
+        except (TypeError, ValueError):
+            age = 0.0
+        if js.get("saved_at_ts") and age > OVERVIEW_SNAPSHOT_MAX_AGE:
+            return None
+        js = dict(js)
+        js["stale"] = True
+        js["samples"] = js.get("samples") or js.get("total_stocks")
+        js["message"] = "统计源暂不可用，显示最近一次成功统计（{}）".format(
+            str(js.get("saved_at") or "")[11:19] or "刚刚")
+        return js
+
+    def _fetch_overview(self, full=False, pages=None):
+        """真正拉一次大盘概览。返回 dict（调用方负责缓存与落盘）。
+
+        新浪那个接口**单页最多 100 行**（实测 num=3000 也只回 100），全市场 5500 只
+        要 56 页；但**并发翻页会被 456 限流**（实测：8 线程并发 12 页后立刻全站 456），
+        所以这里改为**串行 + 页间隔**的温和拉取，并把"要拉几页"交给调用方：
+
+          * 首次快照：`OVERVIEW_PAGES_FAST` 页（约 6 秒，已有足够的涨跌家数样本）；
+          * 后台补全：`OVERVIEW_PAGES_FULL` 页（约 30 秒，覆盖全市场）。
+
+        任何页失败都保留已拿到的样本（部分样本也比没有强），并记录 `errors`。
+        """
+        today = util.today_str().replace("-", "")
+        out = {"ok": False, "date": util.today_str(), "phase": _session_phase(),
+               "rise": None, "fall": None, "flat": None, "zt": None, "dt": None,
+               "amount_yi": None, "source": None, "message": None,
+               "indices": [], "asof": util.now_iso(), "full": bool(full),
+               "samples": 0, "errors": []}
+        n_pages = int(pages or (OVERVIEW_PAGES_FULL if full
+                                else OVERVIEW_PAGES_FAST))
+        rows = []
+        for p in range(1, n_pages + 1):
+            try:
+                raw = util.http_get_text(
+                    SINA_MARKET_PAGE.format(page=p, num=100),
+                    headers={"Referer": SINA_QUOTE_REFERER}, timeout=10)
+                self._note("sina", ok=True, purpose="quote",
+                           limit=self._note_limit("sina"))
+                chunk = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
+                if not isinstance(chunk, list) or not chunk:
+                    break                        # 没有更多页了
+                rows.extend(chunk)
+                if len(chunk) < 100:
+                    break
+            except Exception as e:
+                err = str(e)[:80]
+                out["errors"].append("第{}页 {}".format(p, err))
+                try:
+                    self._note("sina", ok=False, purpose="quote", error=e,
+                               limit=self._note_limit("sina"))
+                except Exception:
+                    pass
+                break                            # 被限流就停手，别把限流拉长
+            time.sleep(OVERVIEW_PAGE_GAP)        # 温和：页间隔，避免 456
+        if rows:
+            rise = fall = flat = zt = dt = 0
+            amount = 0.0
+            for r in rows:
+                try:
+                    pct = float(r.get("changepercent"))
+                except (TypeError, ValueError):
+                    continue
+                if pct > 0.01:
+                    rise += 1
+                elif pct < -0.01:
+                    fall += 1
+                else:
+                    flat += 1
+                if pct >= 9.8:
+                    zt += 1
+                elif pct <= -9.8:
+                    dt += 1
+                try:
+                    amount += float(r.get("amount") or 0)
+                except (TypeError, ValueError):
+                    pass
+            tot = rise + fall + flat
+            out.update({"ok": True, "rise": rise, "fall": fall, "flat": flat,
+                        "zt": zt, "dt": dt, "source": "sina",
+                        "samples": len(rows),
+                        "amount_yi": round(amount / 1e8, 1) if amount else None,
+                        "asof": util.now_iso()})
+            if tot:
+                out["breadth"] = round(rise / float(tot), 4)
+                out["limit_up_ratio"] = round(zt / float(tot), 4)
+        else:
+            out["message"] = "全市场统计源暂无返回（可能是被限流或网络中断）"
+        # 指数（复用实时行情，零额外网络成本）——首页指数条本来就是它
+        try:
+            for q in (self.indices_quote() or []):
+                out["indices"].append({
+                    "code": q.get("code"), "name": q.get("name"),
+                    "price": q.get("price"), "chg_pct": q.get("chg_pct")})
+        except Exception:
+            pass
+        return out
+
+    def _warn_failover(self, purpose, frm, err, to=None):
+        """记一次降级：写 api_usage（可视）并保留原有 warnings 行为。"""
+        try:
+            chain = list((self._usage_chain() or {}).get(purpose) or [])
+            if to is None and frm in chain and chain.index(frm) + 1 < len(chain):
+                to = chain[chain.index(frm) + 1]
+        except Exception:
+            to = None
+        try:
+            api_usage.note_failover(purpose, frm, to, str(err)[:180])
+        except Exception:
+            pass
+        return to
+
+    def _zt_index_history(self, start, end, purpose="index_kline"):
         dm = self._index_key()
         js = self._zt_get("{}?st={}&et={}".format(
             ZT_INDEX_HIST.format(dm=dm),
-            start.replace("-", ""), end.replace("-", "")))
+            start.replace("-", ""), end.replace("-", "")), purpose=purpose)
         if not isinstance(js, list):
             raise DataError("智兔指数K线为空: {}".format(dm))
         out = []
@@ -684,16 +1689,29 @@ class Market:
             raise DataError("智兔指数K线解析失败: {}".format(dm))
         return sorted(out)
 
-    def _em_index_history(self, secid, need_from):
+    def _em_index_history(self, secid, need_from, purpose="index_kline"):
+        """东财指数K线（带本地缓存）。每次在线尝试都计数（eastmoney，无配额）。
+
+        修 BUG（2026-09-11）：请求必须带 **beg=0 与 lmt=<很大>**。
+        旧写法只传 `beg=need_from&end=today`，东财在缺省 `lmt` 下**只返回 40 根K线**
+        （实测 2012 起的请求只回 2017-01-03→2017-02-11 共 40 根）。这段残缺数据
+        曾被"兜底覆盖"写回缓存，把沪深300 的 2673 根长历史截成 ~40 根，
+        连带 `calib.load_closes()` 归零（见 `_kline_save` 的事故说明）。
+        """
+        self._ping("eastmoney", purpose=purpose)
         cache = util.load_json(self._kline_cache_path(secid), {"items": {}})
         items = dict(cache.get("items", {}))
         updated = str(cache.get("updated") or "")
         try:
             beg_d = util.add_days(need_from, -15)
             end = util.add_days(util.today_str(), 3)
-            url = ("{}?secid={}&{}&beg={}&end={}".format(
-                EA_KLINE_URL, secid, EA_KLINE_FIELDS, beg_d, end))
-            js = util.http_get_json(url, timeout=15)
+            # 东财的 beg/end 必须是 **YYYYMMDD**（带横线的 ISO 会被当成非法区间，
+            # 实测会静默退化成"只回 40 根"）；lmt 也必须显式给足（缺省同样只回 40 根）。
+            # 带上 Referer/UA 更稳（无头直连常被"远端直接断开"，重试即可成功）。
+            url = ("{}?secid={}&{}&beg={}&end={}&lmt=10000".format(
+                EA_KLINE_URL, secid, EA_KLINE_FIELDS,
+                str(beg_d).replace("-", ""), str(end).replace("-", "")))
+            js = util.http_get_json(url, timeout=20, headers=EA_KLINE_HEADERS)
             klines = ((js.get("data") or {}).get("klines")) or []
             fresh = []
             for line in klines:
@@ -705,9 +1723,11 @@ class Market:
             for d, c, v in fresh:
                 items[d] = [c, v]
             updated = util.now_iso()
-            util.save_json(self._kline_cache_path(secid),
-                           {"updated": updated, "items": items})
-        except DataError:
+            # 并集写回：东财偶尔仍只回短区间，绝不能覆盖更长的本地历史
+            self._kline_save(self._kline_cache_path(secid), items,
+                             updated=updated)
+        except DataError as e:
+            self._ping("eastmoney", ok=False, error=e, purpose=purpose)
             if not items:
                 raise
             self.warnings.append("指数K线使用本地缓存: {}".format(secid))
@@ -715,13 +1735,31 @@ class Market:
         items = self._drop_partial_today(items, updated)
         return self._kline_seq(items, need_from)
 
-    def index_history(self, need_from=None):
-        """[(date, close, vol)] 升序（收盘K线；当天盘中快照bar会被剔除）。"""
+    def index_history(self, need_from=None, offline=False):
+        """[(date, close, vol)] 升序（收盘K线；当天盘中快照bar会被剔除）。
+
+        ``offline=True``：**只读本地缓存，绝不发起任何在线请求**（不消耗智兔配额）。
+        用途：历史区间（牛市/熊市/震荡市）独立回测 —— 回放过去某一段时，缓存的
+        最新日期通常远早于“今天”，默认逻辑会去联网补数据，既烧配额又让研究不可复现；
+        离线模式直接返回缓存切片（并注册交易日历），缓存为空则**直接报错**
+        （``DataError("离线模式：本地指数K线缓存为空")``），而不是偷偷联网。
+        """
         key = self._index_key()
         need = need_from or util.add_days(util.today_str(), -220)
-        if self.use_zhitu:
-            cache = util.load_json(self._kline_cache_path(key), {"items": {}})
+        if not offline and not self.use_zhitu:
+            return self._em_index_history(key, need)
+        cache = util.load_json(self._kline_cache_path(key), {"items": {}})
+        # 合并两个可能的缓存键（详见 _index_cache_items 的事故说明）
+        items = self._index_cache_items()
+        if not items:
             items = dict(cache.get("items", {}))
+        if offline:
+            # 离线：不判断“缓存是否落后于今天”，也不落盘、不计数
+            if not items:
+                raise DataError("离线模式：本地指数K线缓存为空")
+            self._register_calendar(items)
+            return self._kline_seq(items, need_from)
+        if self.use_zhitu:
             updated = str(cache.get("updated") or "")
             cache_max = max(items) if items else None
             today = util.today_str()
@@ -737,20 +1775,33 @@ class Market:
                     for d, c, v in rows:
                         items[d] = [c, v]
                     updated = util.now_iso()
-                    util.save_json(self._kline_cache_path(key),
-                                   {"updated": updated, "items": items})
+                    # **必须**走并集写回：请求是按 need_from 定范围的，若直接覆盖，
+                    # 比请求范围更长的本地历史会被悄悄截断（实测：一次 2018 起的
+                    # 增量请求把 2449 根缓存写成 1945 根，`calib.load_closes()` 随之下滑）
+                    self._kline_save(self._kline_cache_path(key), items,
+                                     updated=updated)
+                    try:
+                        api_usage.note_active("index_kline", "zhitu")
+                    except Exception:
+                        pass
                 except DataError as e:
                     self.warnings.append("智兔指数K线失败，尝试东财：{}".format(e))
+                    self._warn_failover("index_kline", "zhitu", e, to="eastmoney")
                     try:
                         secid = self.cfg.get("market", {}).get("index", {}) \
                             .get("eastmoney_secid")
-                        items = {d: [c, v] for d, c, v in
-                                 self._em_index_history(secid, need)}
+                        got = {d: [c, v] for d, c, v in
+                               self._em_index_history(secid, need)}
                         key2 = secid
                         updated = util.now_iso()
-                        util.save_json(self._kline_cache_path(key2),
-                                       {"updated": updated, "items": items})
-                        self._register_calendar(items)
+                        # 与已有缓存取并集（兜底接口常只返回一小段，直接覆盖会毁数据）
+                        self._kline_save(self._kline_cache_path(key2), got,
+                                         updated=updated)
+                        self._register_calendar(got)
+                        try:
+                            api_usage.note_active("index_kline", "eastmoney")
+                        except Exception:
+                            pass
                     except DataError:
                         if not items:
                             raise DataError("指数K线获取失败且无缓存")
@@ -758,8 +1809,50 @@ class Market:
             self._register_calendar(items)
             items = self._drop_partial_today(items, updated)
             return self._kline_seq(items, need_from)
-        else:
-            return self._em_index_history(key, need)
+        return self._em_index_history(key, need)
+
+    def index_bars(self, secid, years=5, allow_online=True):
+        """任意指数的日线 [(date, close, vol)] 升序（读本地缓存；缺失时在线补）。
+
+        供跨市场特征用（创业板/中证500 等风格指数与沪深300 的相对强弱）。
+        """
+        key = str(secid)
+        path = self._kline_cache_path(key)
+        cache = util.load_json(path, {"items": {}})
+        items = dict(cache.get("items") or {})
+        need = util.add_days(util.today_str(), -int(years * 365))
+        oldest = min(items) if items else None
+        if allow_online and (oldest is None or oldest > need):
+            rows = []
+            if self.use_zhitu and "." in key:
+                code, mk = key.split(".")[1], key.split(".")[0]
+                zt_code = "{}.{}".format(code, "SH" if mk == "1" else "SZ")
+                try:
+                    rows = self._zt_index_history(
+                        need, util.add_days(util.today_str(), 1),
+                        purpose="index_bars")
+                    try:
+                        api_usage.note_active("index_bars", "zhitu")
+                    except Exception:
+                        pass
+                except DataError as e:
+                    self.warnings.append("{} 智兔K线失败：{}".format(zt_code, e))
+                    self._warn_failover("index_bars", "zhitu", e, to="eastmoney")
+            if not rows:
+                try:
+                    rows = self._em_index_history(key, need, purpose="index_bars")
+                    try:
+                        api_usage.note_active("index_bars", "eastmoney")
+                    except Exception:
+                        pass
+                except DataError as e:
+                    self.warnings.append("{} 指数K线失败：{}".format(key, e))
+            for d, c, v in rows:
+                items[d] = [c, v]
+            if rows:
+                self._kline_save(path, items)
+                self._register_calendar(items)
+        return self._kline_seq(items, need)
 
     def index_latest(self):
         seq = self.index_history()
@@ -781,21 +1874,36 @@ class Market:
         try:
             rows = self._zt_index_history(start, util.add_days(util.today_str(), 1))
             src = "zhitu"
+            try:
+                api_usage.note_active("index_kline", "zhitu")
+            except Exception:
+                pass
         except DataError as e:
             self.warnings.append("智兔长历史失败，尝试东财：{}".format(e))
+            self._warn_failover("index_kline", "zhitu", e, to="eastmoney")
             secid = (self.cfg.get("market", {}).get("index", {})
                      or {}).get("eastmoney_secid")
             seq = self._em_index_history(secid, start)
-            items = {d: [c, v] for d, c, v in seq}
+            # 与已有缓存取并集，绝不因兜底区间更短而丢历史（见 _kline_save 的事故说明）
+            merged = dict(items)
+            for d, c, v in seq:
+                merged[d] = [c, v]
+            items = merged
             src = "eastmoney"
+            try:
+                api_usage.note_active("index_kline", "eastmoney")
+            except Exception:
+                pass
         else:
             for d, c, v in rows:
                 items[d] = [c, v]
-        util.save_json(path, {"updated": util.now_iso(), "items": items})
+        # 写回（_kline_save 会与磁盘已有数据取并集，避免兜底区间更短时丢历史）
+        self._kline_save(path, items)
         self._register_calendar(items)
         ks = sorted(items)
         res = {"source": src, "bars": len(items),
                "start": ks[0] if ks else None, "end": ks[-1] if ks else None}
+
         if with_benchmarks:
             em_secids = []
             for it in self._indices_cfg():

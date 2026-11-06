@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """内置 Web 服务：静态界面 + JSON API（仅标准库 http.server）。"""
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+from . import analysis
 from . import news as newsmod
 from . import screening, settings, util
 from .datasource import Market
@@ -14,7 +16,23 @@ from .engine import Engine
 from .ledger import Ledger
 from .util import DataError
 
-STATIC_DIR = util.PROJECT / "web" / "static"
+
+def _static_dir():
+    """静态资源目录（同时支持源码树与安装包两种布局）。
+
+    * 源码树 / 便携包：`<项目根>/web/static`
+    * pip 安装（wheel）：`fundai/static`（打进包里的副本）
+    打包纪律：两处内容必须一致（构建前由 `tools/make_release.py` 同步校验）。
+    """
+    cands = [util.PROJECT / "web" / "static",
+             Path(__file__).resolve().parent / "static"]
+    for c in cands:
+        if c.exists():
+            return c
+    return cands[0]
+
+
+STATIC_DIR = _static_dir()
 BACKTEST_FILE = util.data_file("backtest_last.json")
 
 ALLOWED_STATIC = {"index.html", "app.js", "style.css", "vendor/echarts.min.js"}
@@ -28,7 +46,7 @@ class ApiApp:
     """共享给所有请求的上下文（含线程安全的 SQLite 连接）。"""
 
     def __init__(self, cfg, db_path, demo=False):
-        self.cfg = cfg
+        self._cfg = cfg
         self.db_path = db_path
         self.demo = demo
         self.ledger = Ledger(str(db_path),
@@ -41,6 +59,31 @@ class ApiApp:
         # 服务端快照缓存：GET 只读轮询不再每次都遍历全池在线拉净值（audit P1-9）
         self._snap = {}
         self._snap_lock = threading.Lock()
+        # 资产曲线自愈：启动后台补记近日缺失快照（缺净值日自动跳过，不阻塞启动）
+        if not demo:
+            def _heal_curve():
+                time.sleep(3.0)
+                try:
+                    self.engine.backfill_snapshots(days=7)
+                except Exception:
+                    pass
+            threading.Thread(target=_heal_curve, daemon=True).start()
+
+    @property
+    def cfg(self):
+        """配置热更新：config.json 改动后无需重启服务即生效（settings 自带
+        mtime 缓存，未变更时是零成本判断；演示库的内存改值不参与）。
+        文件被编辑成非法 JSON 时保留旧配置继续服务，不打断运行中的流程。"""
+        if not self.demo:
+            try:
+                fresh = settings.load_config()
+            except Exception:
+                return self._cfg
+            if fresh is not self._cfg:
+                self._cfg = fresh
+                self.engine.cfg = fresh
+                self.market.reload(fresh)
+        return self._cfg
 
     def _snapshot(self, key, ttl, fn):
         """按 key 做 TTL 快照缓存（ttl 秒）。fn 返回可 JSON 序列化对象。"""
@@ -54,54 +97,117 @@ class ApiApp:
             self._snap[key] = (time.time(), val)
         return val
 
-    def _invalidate(self):
+    def _invalidate(self, key=None):
         with self._snap_lock:
-            self._snap.clear()
+            if key:
+                self._snap.pop(key, None)
+            else:
+                self._snap.clear()
 
     # ---------------- 消息与进化（筛选/学习/搜索补全） ----------------
     def news_payload(self, date_s=None):
         """组装“消息与进化”页：当日 feed、打标概况、学习词、方向命中率、补全队列。"""
         date_s = date_s or util.today_str()
         scr = self.screen
-        amp = int(((self.cfg.get("strategy") or {}).get("news_amp") or 8))
+        st_cfg0 = self.cfg.get("strategy") or {}
+        amp = int((st_cfg0.get("news_amp") or 8))
         nmap = {}
         for f in self.engine._pool_items():
             nmap[f["code"]] = f.get("name") or f["code"]
         items = scr.items_for(date_s)  # 时间倒序
-        # ETF 场内溢价/临停等“产品层面风险提示”：AI 判中性、不进人工额度（也无需人工）；
-        # 已人工打标的照常按“已打标”处理
-        premium = [r for r in items if not r.get("user_label") and
-                   r.get("event_type") == "fund_premium_warning"]
-        rest = [r for r in items if r not in premium]
+        # 例行噪音自动归档：ETF 溢价/临停（产品层面）、机构持股比例权益披露
+        # （单一个股筹码趋势）、**行情播报**（纯指数/商品报价，2026-09-16 新增）
+        # → 都不占人工额度、不进净情绪；已打标的照常处理
+        auto_ids = {r["item_id"] for r in items if not r.get("user_label")
+                    and r.get("event_type") in screening.AUTO_NEUTRAL_EVENTS}
+        auto_first = [r for r in items if r["item_id"] in auto_ids]
+        rest = [r for r in items if r["item_id"] not in auto_ids]
+        # 兜底：同模板批量刷屏（骨架相似的 AI 中性消息）归并，只留代表条待确认
+        rest, dupes = screening.collapse_same_template(rest)
+        dup_ids = {r["item_id"] for r in dupes}
+        # 行情播报单独报数（前端在"AI归档"里单列一组，避免与"真消息"混在一起）。
+        # 这类内容"只是消息面、根本不构成利空利好"（用户原话），所以只给计数与代表条。
+        broadcast_n = sum(1 for r in auto_first
+                          if r.get("event_type") == screening.BROADCAST_EVENT)
         review_head, neutral_extra, ai_head, done = \
-            screening.ScreeningStore.review_split(rest, MAX_REVIEW_QUEUE)
+            screening.ScreeningStore.review_split(
+                rest, MAX_REVIEW_QUEUE,
+                low_conf=float(st_cfg0.get("news_low_conf_threshold") or 0.45))
         todo_ids = {r["item_id"] for r in review_head}
-        ordered = review_head + premium + neutral_extra + ai_head + done
+        ordered = review_head + auto_first + neutral_extra + dupes + ai_head + done
         feed = []
         for r in ordered:
             d = dict(r)
             # 前端打标按钮用 it.id（见 app.js renderNews）；SQLite 行主键叫 item_id，
             # 这里补一个 id 别名，避免前端提交 “undefined” 导致打标 500。
             d["id"] = d.get("item_id") or d.get("id") or ""
+            dup_of = d.pop("_dup_of", None)
+            if dup_of:
+                d["dup_of"] = dup_of
             d["needs_review"] = not d.get("user_label") and \
                 d.get("item_id") in todo_ids
+            et = d.get("event_type")
             d["auto_handled"] = not d.get("user_label") and \
-                d.get("event_type") == "fund_premium_warning"
+                (d.get("item_id") in auto_ids or d.get("item_id") in dup_ids)
+            d["auto_kind"] = ("dup" if d.get("item_id") in dup_ids else
+                              ("premium" if et == "fund_premium_warning" else
+                               ("disclosure" if et == "holdings_disclosure"
+                                else ("broadcast"
+                                      if et == screening.BROADCAST_EVENT
+                                      else ""))))
+            # 判断来源兜底：例行噪音（ETF 溢价/临停、机构权益披露）是在**分流阶段**
+            # 被自动归档的，根本没走 AI/LLM 路径，库里 decided_by 是空的。
+            # 这里补一个如实的来源标注，保证前端每条都答得出"谁判的"。
+            if not d.get("decided_by"):
+                d["decided_by"] = ("auto_archive" if d["auto_kind"] else
+                                   ("event" if et and et != "dict" else "context"))
             d["ai_decided"] = not d.get("user_label") and \
                 not d["needs_review"] and not d["auto_handled"] and \
                 (d.get("auto_label") or "neutral") != "neutral"
             d["funds_links"] = [{"code": c, "name": nmap.get(c, c)}
                                 for c in (d.get("funds") or [])]
             feed.append(d)
-        auto_net = round(sum(x.get("auto_strength") or 0 for x in items
-                             if x.get("auto_label") in ("bull", "bear")), 2)
-        auto_score = int(max(-100, min(100, max(-8, min(8, auto_net)) *
-                                       max(1, amp))))
+        # 自动消息分：**必须与引擎同一口径**（来源过滤 + 抗饱和刻度 + LLM 降噪）。
+        # 旧实现用 clamp(Σ强度,±8)：日强度常达 300~900 → 天天顶格 +8 → 卡片恒显示 +64，
+        # 且与引擎实际使用的分值不一致（audit 2026-09-11 用户反馈）。
+        st_cfg = (self.cfg.get("strategy") or {})
+        auto_scope, auto_net, auto_net_src = {}, None, "store"
+        cached_news = {}
+        try:
+            p = newsmod.news_cache_file(date_s)
+            if p.exists():
+                cached_news = util.load_json(p, {}) or {}
+        except Exception:
+            cached_news = {}
+        if cached_news.get("ok") and cached_news.get("scope"):
+            # 当日消息面已抓过 → 直接用它的分数与口径（引擎用的就是这份）
+            auto_net = cached_news.get("net")
+            auto_score = cached_news.get("score")
+            auto_scope = cached_news.get("scope") or {}
+            auto_net_src = "cache"
+        else:
+            focus = list(st_cfg.get("news_focus_events")
+                         or newsmod.DEFAULT_FOCUS_EVENTS)
+            dict_mode = str(st_cfg.get("news_dict_mode") or "off")
+            include_other = bool(st_cfg.get("news_include_other_events", False))
+            mode = str(st_cfg.get("news_net_mode") or "scaled")
+            scale = float(st_cfg.get("news_net_scale") or 70.0)
+            net, raw, n_in = newsmod.net_score(
+                items, mode=mode, scale=scale, focus=focus, dict_mode=dict_mode,
+                include_other=include_other)
+            auto_net = round(net, 3)
+            auto_score = int(max(-100, min(100, net * max(1, amp))))
+            auto_scope = {"focus_events": focus, "dict_mode": dict_mode,
+                          "include_other": include_other, "n_in_scope": n_in,
+                          "net_raw": round(raw, 1), "mode": mode, "scale": scale,
+                          "note": "按当前口径近似重算（当日无消息面缓存，LLM 降噪未计入）"}
         labels = scr.labels_summary(date_s)
         human = scr.human_news_meta(date_s, amplitude=amp)
         learned = scr.lexicon_rows(120)
         from . import lexicon
         direction = scr.direction(date_s)
+        # 跨天显示：今天还没跑研判时，把“昨日给出、针对今天”的判断补上（否则面板空白）
+        direction_for_today = direction or scr.direction_pending(date_s)
         stats = scr.direction_stats()
         qstate = util.load_json(screening.SEARCH_QUEUE_FILE, {"items": []})
         queue = qstate.get("items", [])
@@ -111,9 +217,12 @@ class ApiApp:
             "feed_count": len(items),
             "todo": len(review_head),        # 待你人工确认（≤MAX_REVIEW_QUEUE）
             "review_extra": len(neutral_extra),  # 超出额度未排入优先的中性条数
+            "auto_archived": len(auto_first) + len(dupes),  # 例行披露/同模板归并
+            "broadcast_archived": broadcast_n,   # 其中"行情播报"的条数（单列）
             "ai_accepted": len(ai_head),     # 直接采用 AI 判断（利好/利空明确）
             "done": len(done),
             "auto_score": auto_score, "auto_net": auto_net,
+            "auto_scope": auto_scope, "auto_net_src": auto_net_src,
             "human": human,
             "labels": labels,
             "learned": learned,
@@ -121,6 +230,8 @@ class ApiApp:
             "base_lexicon": {"bull": len(lexicon.BULL_STRONG) + len(lexicon.BULL_WEAK),
                              "bear": len(lexicon.BEAR_STRONG) + len(lexicon.BEAR_WEAK)},
             "direction": direction,
+            "direction_today": direction_for_today,
+            "direction_is_pending": bool(direction is None and direction_for_today),
             "stats": stats,
             "queue": queue,
             "queue_open": [x for x in queue if x.get("status") == "open"],
@@ -143,6 +254,62 @@ class ApiApp:
         return news_obj
 
     # ---------------- 事件命中率校准 & 历史数据状态（可视化） ----------------
+    def start_calib_backfill(self, days=20, max_pages=700):
+        """后台跑“财联社历史电报 → 事件命中率校准”（约 2–5 分钟，逐页回溯+缓存续跑）。
+
+        常驻服务每 15 分钟会被保活任务重启，因此进度随时落盘（每 10 页存一次），
+        被重启也能断点续跑；前端轮询 /api/calibration 看进度。
+        """
+        if getattr(self, "_calib_busy", False):
+            return {"ok": False, "message": "历史回填校准正在运行中（{}）".format(
+                getattr(self, "_calib_msg", ""))}
+        self._calib_busy = True
+        self._calib_msg = "启动中…"
+
+        def _run():
+            try:
+                from . import calib_history
+                cal = calib_history.calibrate(
+                    days=int(days), max_pages=int(max_pages), delay=0.3,
+                    progress=lambda p, o: setattr(
+                        self, "_calib_msg", "已回溯 {} 页（每页 50 条）".format(p)))
+                self._calib_msg = "完成：{} → {}，电报 {} 条".format(
+                    cal["window"]["from"], cal["window"]["to"],
+                    (cal.get("data") or {}).get("telegrams"))
+                self._invalidate("calib")
+            except Exception as e:
+                self._calib_msg = "失败：{}".format(str(e)[:120])
+            finally:
+                self._calib_busy = False
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "message": "已开始历史回填校准（后台运行，约 2–5 分钟）"}
+
+    def start_event_model(self, days=400, select=True, warmup=60):
+        """后台跑“事件→次日方向”样本外模型（打分缓存 + walk-forward + 选择性出手）。"""
+        if getattr(self, "_model_busy", False):
+            return {"ok": False, "message": "模型正在运行中（{}）".format(
+                getattr(self, "_model_msg", ""))}
+        self._model_busy = True
+        self._model_msg = "启动中…"
+
+        def _run():
+            try:
+                from . import event_model
+                self._model_msg = "打分缓存 + walk-forward 评估中…"
+                rep = event_model.run(days=int(days), warmup=int(warmup),
+                                      select=bool(select))
+                m = rep.get("metrics") or {}
+                self._model_msg = "完成：{} 天（样本外 {} 天，整体命中 {}）".format(
+                    (rep.get("window") or {}).get("days"), m.get("n"),
+                    ("{:.0%}".format(m["acc"]) if m.get("acc") is not None else "—"))
+                self._invalidate("calib")
+            except Exception as e:
+                self._model_msg = "失败：{}".format(str(e)[:120])
+            finally:
+                self._model_busy = False
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "message": "已开始样本外建模（后台运行，约 1–3 分钟）"}
+
     def calibration_payload(self):
         """消息→次日涨跌 样本统计 + 主指数历史缓存状态 + 最近结算日志尾部。"""
         from . import calib
@@ -167,8 +334,83 @@ class ApiApp:
                 tail = [ln for ln in raw.strip().splitlines() if ln.strip()][-6:]
         except Exception:
             tail = []
+        back = {}
+        try:
+            from . import calib_history
+            back = calib_history.load_calibration()
+        except Exception:
+            back = {}
+        model = {}
+        try:
+            from . import event_model
+            model = util.load_json(util.data_file(event_model.MODEL_FILE), {}) or {}
+        except Exception:
+            model = {}
         return {"report": rep, "history": hist, "last_run": tail,
+                "hist_backfill": back, "backfill_running":
+                    bool(getattr(self, "_calib_busy", False)),
+                "backfill_msg": getattr(self, "_calib_msg", ""),
+                "event_model": model, "model_running":
+                    bool(getattr(self, "_model_busy", False)),
+                "model_msg": getattr(self, "_model_msg", ""),
                 "next_auto": "每交易日 20:30 自动结算（计划任务 fundai_daily_signals）"}
+
+    # ---------------- 微观结构情绪复盘（涨停池/晋级率/题材热度） ----------------
+    def micro_payload(self, force=False):
+        from . import microstructure
+        st = self.cfg.get("strategy", {}) or {}
+        if not st.get("micro_enable", True):
+            return {"ok": False, "enabled": False,
+                    "message": "已关闭（strategy.micro_enable=false）"}
+        D = util.today_str()
+        pulse = microstructure.load_pulse(D, force=force, cfg=self.cfg)
+        if not pulse.get("ok") and not microstructure.load_snap(D):
+            # 盘中/清晨当日尚无收盘数据 → 回退上一交易日复盘（morning 可用）
+            D2 = util.prev_trading_day(D)
+            p2 = microstructure.load_pulse(D2, cfg=self.cfg)
+            if p2.get("ok"):
+                p2["asof_note"] = "当日收盘数据尚未生成，展示 {} 复盘".format(D2)
+                pulse = p2
+        hist = microstructure.history_pulses(
+            (pulse.get("snap") or {}).get("date") or D,
+            days=int(st.get("micro_hist_days", 5)), cfg=self.cfg)
+        heat, heat_meta, context = {}, {}, {}
+        try:
+            context = microstructure.sentiment_context(
+                (pulse.get("snap") or {}).get("date") or D, cfg=self.cfg)
+        except Exception:
+            context = {}
+        try:
+            rep = microstructure.theme_heat_report(hist)   # 内部按 date 自排，勿再反转
+            heat = rep.get("map") or {}
+            heat_meta = {"days": rep.get("days") or [], "decay": rep.get("decay") or [],
+                         "date": rep.get("date"), "market_heat": rep.get("market_heat"),
+                         "trend": rep.get("trend"), "ignitions": rep.get("ignitions") or [],
+                         "zt_latest": rep.get("zt_latest"), "zt_prev": rep.get("zt_prev"),
+                         "rows": (rep.get("rows") or [])[:12]}
+        except Exception:
+            pass
+        snap = dict(pulse.get("snap") or {})
+        snap.pop("zt_codes", None)  # 体积控制：不向浏览器下发全量代码
+        slim_hist = [{"date": h.get("date"), "score": h.get("score"),
+                      "zt": h.get("zt"), "zb_rate": h.get("zb_rate"),
+                      "dt": h.get("dt"), "max_board": h.get("max_board"),
+                      "promotion_rate": h.get("promotion_rate"),
+                      "rise_ratio": h.get("rise_ratio"),
+                      "mood": (h.get("qualitative") or {}).get("mood")}
+                     for h in hist]
+        return {"ok": bool(pulse.get("ok")), "enabled": True,
+                "date": snap.get("date") or D, "asof": pulse.get("asof_note"),
+                "snap": snap, "stale": bool(pulse.get("stale")),
+                "errors": pulse.get("errors") or [],
+                "message": pulse.get("message"),
+                "lines": microstructure.review_lines(pulse),
+                "history": slim_hist, "theme_heat": heat,
+                "sentiment_context": context,
+                "theme_heat_meta": heat_meta,
+                "weight": float(st.get("micro_weight", 0.15) or 0),
+                "cap": float(st.get("micro_score_cap", 30) or 0),
+                "now": util.now_iso()}
 
     # ---------------- 指令操作 ----------------
     def manual_fill(self, payload):
@@ -269,8 +511,46 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, obj)
 
-    def _err(self, msg, code=500):
+    def _err(self, msg, code=400):
+        """返回失败 JSON。
+
+        **状态码语义**（2026-09-11 审计后统一）：
+          * 400 参数/状态不合法（默认）——例如"订单不存在""方向判断已停用"；
+          * 403 只读拒绝（演示库不允许写操作）、路径穿越；
+          * 404 路由/静态文件不存在；
+          * 409 并发冲突（上一次任务仍在运行、系统忙）；
+          * 500 **只用于真正的未预期异常**（`except Exception` 分支）。
+        旧实现把所有失败都写成 500，导致"预期内的业务拒绝"与"真故障"在监控/日志里
+        无法区分（前端 `api()` 只看 `ok` 字段，所以界面行为不变）。
+        """
         self._json({"ok": False, "message": msg}, code)
+
+    def _schedule_self_restart(self):
+        """后台线程：拉一个 --relaunch 的新服务进程，等它接管端口后自己退出。"""
+        import subprocess
+        import threading as _th
+        import sys as _sys
+        from pathlib import Path as _P
+
+        def _work():
+            time.sleep(0.8)                 # 让上面那个 200 先发出去
+            root = _P(util.PROJECT)
+            starter = root / "fundai_start_hidden.py"
+            exe = _sys.executable
+            # 优先用 pythonw（不弹控制台）；没有就用当前解释器
+            cand = _P(exe).with_name("pythonw.exe")
+            if cand.exists():
+                exe = str(cand)
+            try:
+                subprocess.Popen([exe, str(starter), "--relaunch"], cwd=str(root),
+                                 close_fds=True)
+            except Exception:
+                pass
+            # 给自己的退出留出时间：新进程用 --relaunch 最多等 25 秒端口
+            time.sleep(6.0)
+            os._exit(0)
+
+        _th.Thread(target=_work, daemon=True).start()
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -304,7 +584,15 @@ class Handler(BaseHTTPRequestHandler):
             # 界面轮询常拖全量研判正文（LLM 长文可到 MB 级）：只给最近 150 条
             self._json({"ok": True, "records": self.app.ledger.get_records(150)})
         elif path == "/api/orders":
-            self._json({"ok": True, "orders": self.app.ledger.orders()})
+            # 带上基金名称（服务端解析：动态池→config 池→候选池→账本代码），
+            # 否则界面只能显示基金代码（2026-09-15 用户反馈）
+            rows = self.app.ledger.orders()
+            for o in rows:
+                code = str(o.get("fund_code") or "")
+                nm = (self.app.engine.name_anywhere(code) if code else "")
+                if nm and nm != code:
+                    o["fund_name"] = nm
+            self._json({"ok": True, "orders": rows})
         elif path == "/api/funds":
             funds = self.app._snapshot("funds", 60, self.app.engine.fund_status)
             self._json({"ok": True, "funds": funds})
@@ -314,10 +602,63 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 items = []
             self._json({"ok": True, "indices": items})
+        elif path == "/api/version":
+            # 守护脚本用它判断"在跑的服务是不是当前代码"（见 code_stamp 的说明）。
+            # 刻意保留极简响应（不碰数据、不触发任何在线请求）。
+            self._json({"ok": True,
+                        "stamp": getattr(self.app, "code_stamp", None),
+                        "started_at": getattr(self.app, "started_at", None),
+                        "features": ["market/overview", "market/intraday",
+                                     "direction-check", "intraday/run",
+                                     "intraday/settle", "restart"]})
+        elif path == "/api/market/overview":
+            # 主界面「大盘概览」：涨跌家数/涨跌停/成交额/交易时段（缓存 5 分钟，
+            # 首次调用触发后台预热并先返回 warming=true，前端稍后重试即可拿到数据）
+            try:
+                _force = (q.get("force") or ["0"])[0] not in ("0", "false", "")
+                ov = self.app.market.market_overview(force=_force)
+            except Exception as e:
+                ov = {"ok": False, "message": str(e)[:120]}
+            self._json({"ok": True, "overview": ov})
+        elif path == "/api/market/intraday":
+            # 主界面「今日分时」：基准指数当日分时（5 分钟点，缓存 60 秒）
+            try:
+                it = self.app.market.index_intraday()
+            except Exception as e:
+                it = {"ok": False, "message": str(e)[:120], "points": []}
+            self._json({"ok": True, "intraday": it})
+        elif path == "/api/intraday":
+            # 午间复盘（午间诊断）状态：主界面卡片的数据源。
+            # 注意与 /api/market/intraday（指数当日分时）区分：
+            # 前者是"上午发生了什么"的诊断记录，后者是行情曲线。
+            from . import intraday as _intra
+            try:
+                st_ = _intra.status(days=int((q.get("days") or ["14"])[0]))
+            except Exception as e:
+                st_ = {"ok": False, "message": str(e)[:120]}
+            self._json({"ok": True, "intraday": st_})
         elif path == "/api/config":
             cfg = settings.public_cfg(self.app.cfg)
             cfg["account_meta"] = self.app.ledger.account_meta()
-            self._json({"ok": True, "config": cfg})
+            # 参数开关面板所需的元数据（中文名/说明/类型/范围/分组/开关清单）
+            from . import configedit, param_docs
+            resp = {"ok": True, "config": cfg}
+            if (q.get("params") or ["1"])[0] not in ("0", "false"):
+                resp["params"] = param_docs.PARAMS
+                resp["groups"] = param_docs.GROUPS
+                resp["toggles"] = param_docs.TOGGLES
+                resp["sensitive"] = list(configedit.SENSITIVE)
+                resp["restart_keys"] = list(configedit.RESTART_KEYS)
+                # 当前值（读盘、每次请求现取，写入后立即一致）与代码默认值（供重置）
+                live = self.app.cfg
+                resp["values"] = {p["key"]: configedit._get(live, p["key"])
+                                  for p in param_docs.PARAMS}
+                resp["defaults"] = {p["key"]: configedit._get(settings.DEFAULT_CFG,
+                                                             p["key"])
+                                    for p in param_docs.PARAMS}
+            resp["backups"] = ([b["name"] for b in configedit.list_backups()][:10]
+                               if not self.app.demo else [])
+            self._json(resp)
         elif path == "/api/backtest":
             last = util.load_json(BACKTEST_FILE)
             self._json({"ok": True, "last": last})
@@ -328,8 +669,42 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/news/dirstats":
             self._json({"ok": True,
                         "stats": self.app.screen.direction_stats(400)})
+        elif path == "/api/interventions":
+            # 人工额度面板：当日用量、剩余、AI 自动完成量、低把握度待抽检清单
+            from . import interventions as _iv
+            date_s = (q.get("date") or [None])[0]
+            limit = int((q.get("limit") or ["30"])[0] or 30)
+            # 默认阈值来自配置（strategy.news_low_conf_threshold）：低于它的消息
+            # 才需要人工抽检——这就是"50 次额度花在哪"的判据。
+            default_th = float((self.app.cfg.get("strategy") or {}).get(
+                "news_low_conf_threshold") or 0.45)
+            threshold = float((q.get("threshold") or [str(default_th)])[0]
+                              or default_th)
+            self._json({"ok": True, "budget": _iv.status(date_s=date_s),
+                        "low_confidence": _iv.low_confidence(
+                            limit=limit, threshold=threshold, date_s=date_s)})
+        elif path == "/api/lexicon":
+            # 学习成果：**术语 × 市场实际反应**（不再是"词的方向"）
+            from . import screening as _scr
+            st = _scr.ScreeningStore()
+            try:
+                rows = st.lexicon_rows(120)
+                stats = st.term_stats()
+            finally:
+                try:
+                    st.close()
+                except Exception:
+                    pass
+            self._json({"ok": True, "terms": rows, "stats": stats,
+                        "min_samples": _scr.ScreeningStore.MIN_SAMPLES,
+                        "note": "方向来自含该术语消息的**次日实际涨跌**，"
+                                "样本不足不给方向；打分时还要结合上下文（结果动词/"
+                                "对象层级/否定转折）与 AI 判断。"})
         elif path == "/api/calibration":
             self._json({"ok": True, "cal": self.app.calibration_payload()})
+        elif path == "/api/micro":
+            payload = self.app._snapshot("micro", 300, self.app.micro_payload)
+            self._json({"ok": True, "micro": payload})
         else:
             self._err("404 not found: " + path, 404)
 
@@ -338,7 +713,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._err("forbidden", 403)
         p = STATIC_DIR / name
         if not p.exists():
-            return self._err("static missing: " + name, 500)
+            # 本地未内置（如 vendor/echarts.min.js 还没执行 vendor-echarts）→ 干净 404，
+            # 由前端优雅降级到 CDN/文字模式，不再返回 500
+            return self._err("static missing: " + name, 404)
         self._send(200, p.read_bytes(), ctype)
 
     def _state(self):
@@ -349,14 +726,29 @@ class Handler(BaseHTTPRequestHandler):
             cached = {"error": str(e)}
         st = dict(cached)  # 浅拷贝，避免污染共享缓存
         st["readonly_demo"] = app.demo
+        _llm = app.cfg.get("llm") or {}
         st["config"] = {
             "funds": app.cfg.get("pool", []),
             "strategy": app.cfg.get("strategy", {}),
-            "llm_enabled": bool((app.cfg.get("llm") or {}).get("enabled")),
-            "llm_provider": (app.cfg.get("llm") or {}).get("provider"),
+            # 与引擎实际门控一致：enabled 且 api_key 非空才算启用
+            "llm_enabled": bool(_llm.get("enabled")
+                                and str(_llm.get("api_key") or "").strip()),
+            "llm_provider": (" · ".join(x for x in [
+                analysis.llm_label(app.cfg),
+                str(_llm.get("model") or "")] if x) or None),
+            "llm_needs_key": bool(_llm.get("enabled")
+                                  and not str(_llm.get("api_key") or "").strip()),
             "index": (app.cfg.get("market") or {}).get("index", {}),
             "fees": app.cfg.get("fees", {}),
         }
+        # 人工介入预算（用户要求：每天**一共**不超过 50 次）：
+        # 把"今天要你点几次 / 还剩几次 / AI 替你做了多少"直接放进 state，
+        # 让额度成为主界面可见的一等公民，而不是每个模块各写一句话。
+        try:
+            from . import interventions as _iv
+            st["interventions"] = _iv.status()
+        except Exception as e:
+            st["interventions"] = {"error": str(e)[:120]}
         self._json({"ok": True, "state": st})
 
     # ---------------- POST ----------------
@@ -365,9 +757,49 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         app = self.app
         body = self._body()
+        if path == "/api/restart":
+            # 自重启：代码更新后由守护脚本调用（见 fundai_start_hidden.py）。
+            # 先回 200（让调用方拿到确认），再在后台线程里拉新进程 + 自己退出。
+            stamp = getattr(app, "code_stamp", None)
+            disk = code_stamp()
+            if stamp == disk:
+                return self._json({"ok": True, "restarted": False,
+                                   "stamp": stamp,
+                                   "message": "代码未变，无需重启"})
+            self._json({"ok": True, "restarted": True, "stamp": disk,
+                        "from": stamp, "message": "正在以新代码重启服务"})
+            self._schedule_self_restart()
+            return
+        if path == "/api/intraday/run":
+            # 手动触发午间复盘（主界面【立即诊断】按钮）
+            if app.demo:
+                return self._err("演示库只读，午间诊断请用正式库", 403)
+            from . import intraday as _intra
+            try:
+                r = _intra.run_midday(cfg=app.cfg, force=True)
+            except Exception as e:
+                r = {"ok": False, "message": "诊断失败：{}".format(str(e)[:120])}
+            return self._json({"ok": bool(r.get("ok")),
+                               "message": r.get("summary") or r.get("message"),
+                               "result": r, "intraday": _intra.status(days=14)})
+        if path == "/api/intraday/settle":
+            # 手动结算今日午间观点（用"收盘 vs 11:30"）
+            if app.demo:
+                return self._err("演示库只读，午间结算请用正式库", 403)
+            from . import intraday as _intra
+            try:
+                r = _intra.settle(cfg=app.cfg)
+            except Exception as e:
+                r = {"ok": False, "message": "结算失败：{}".format(str(e)[:120])}
+            return self._json({"ok": bool(r.get("ok")),
+                               "message": r.get("message") or (
+                                   "已结算：{}（下午 {}）".format(
+                                       "命中" if r.get("hit") else "未中",
+                                       r.get("pm_chg")) if r.get("ok") else None),
+                               "result": r, "intraday": _intra.status(days=14)})
         if path == "/api/run-daily":
             if app.demo:
-                return self._err("演示库为只读，请用正式库运行每日研判（python app.py run-daily）")
+                return self._err("演示库为只读，请用正式库运行每日研判（python app.py run-daily）", 403)
             if not app._busy.acquire(blocking=False):
                 return self._err("上一次任务仍在运行，请稍候", 409)
             try:
@@ -380,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
                 app._busy.release()
         elif path == "/api/pool/refresh":
             if app.demo:
-                return self._err("演示库为只读，动态筛选请用正式库")
+                return self._err("演示库为只读，动态筛选请用正式库", 403)
             if not app._busy.acquire(blocking=False):
                 return self._err("系统忙，请稍候", 409)
             try:
@@ -388,14 +820,14 @@ class Handler(BaseHTTPRequestHandler):
                 app._invalidate()
                 return self._json({"ok": bool(res.get("ok")), "result": res})
             except Exception as e:
-                return self._err("重建备选池失败：" + str(e))
+                return self._err("重建备选池失败：" + str(e), 500)
             finally:
                 app._busy.release()
         elif path == "/api/orders/confirm":
             oid = body.get("id")
             o = app.ledger.order_by_id(oid)
             if not o or o["status"] != "pending":
-                return self._err("订单不存在或不可确认")
+                return self._err("订单不存在或不可确认", 404)
             submit_at = str(body.get("submit_at") or util.now_iso())
             updated = app.ledger.confirm_order(oid, submit_at)
             # 计算给用户的 T+1 时间线
@@ -411,7 +843,7 @@ class Handler(BaseHTTPRequestHandler):
             oid = body.get("id")
             o = app.ledger.order_by_id(oid)
             if not o or o["status"] not in ("pending", "submitted"):
-                return self._err("订单不存在或当前状态不可跳过/撤销")
+                return self._err("订单不存在或当前状态不可跳过/撤销", 404)
             app.ledger.skip_order(oid, "用户手动跳过/撤销")
             app._invalidate()
             return self._json({"ok": True,
@@ -423,13 +855,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = app.manual_fill(body)
                 app._invalidate()
-                return self._json(res)
+                # 统一状态码（2026-09-11 审计）：失败时不再回 200+ok:false
+                if res.get("ok"):
+                    # 人工回填成交 = 真需要人的动作（自动 T+1 确认覆盖不到的场合）
+                    try:
+                        from . import interventions as _iv
+                        _iv.human("order", n=1, detail=[{
+                            "why": "人工录入成交：{}".format(
+                                str(body.get("fund_code") or body.get("id") or "")[:24])}])
+                    except Exception:
+                        pass
+                    return self._json(res)
+                code = 404 if "订单不存在" in str(res.get("message") or "") else 400
+                return self._err(res.get("message") or "录入成交失败", code)
             finally:
                 app._busy.release()
         elif path == "/api/positions/refresh":
             # “持仓盈亏”独立刷新：强制在线取持仓基金最新净值（绕过 75s 状态快照）
             if app.demo:
-                return self._err("演示库只读，持仓为合成数据无需刷新")
+                return self._err("演示库只读，持仓为合成数据无需刷新", 403)
             if not app._busy.acquire(blocking=False):
                 return self._err("正在刷新，请稍候", 409)
             try:
@@ -437,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
                 app._invalidate()
                 return self._json(res)
             except Exception as e:
-                return self._err("持仓刷新失败：" + str(e))
+                return self._err("持仓刷新失败：" + str(e), 500)
             finally:
                 app._busy.release()
         elif path == "/api/backtest":
@@ -452,14 +896,15 @@ class Handler(BaseHTTPRequestHandler):
                 util.save_json(BACKTEST_FILE, res)
                 return self._json({"ok": True, "result": res})
             except DataError as e:
-                return self._err(str(e))
+                # 数据不可用（接口失败 / 区间不足）→ 503（暂时不可用），不是参数错
+                return self._err(str(e), 503)
             except Exception as e:
-                return self._err("回测失败：" + str(e))
+                return self._err("回测失败：" + str(e), 500)
             finally:
                 app._busy.release()
         elif path == "/api/news/pull":
             if app.demo:
-                return self._err("演示库为只读；消息筛选请用正式库（python app.py serve）")
+                return self._err("演示库为只读；消息筛选请用正式库（python app.py serve）", 403)
             if not app._busy.acquire(blocking=False):
                 return self._err("系统忙，请稍候", 409)
             try:
@@ -474,27 +919,55 @@ class Handler(BaseHTTPRequestHandler):
                                    "fetched": news_obj.get("items", 0),
                                    "auto_score": news_obj.get("score")})
             except DataError as e:
-                return self._err("消息抓取失败：" + str(e))
+                return self._err("消息抓取失败：" + str(e), 500)
             finally:
                 app._busy.release()
+        elif path == "/api/micro/refresh":
+            try:
+                payload = app.micro_payload(force=True)
+                app._invalidate("micro")
+                return self._json({"ok": True, "micro": payload})
+            except Exception as e:
+                return self._err("微观结构重抓失败：" + str(e)[:160], 500)
         elif path == "/api/news/rate":
             if app.demo:
-                return self._err("演示库只读")
+                return self._err("演示库只读", 403)
             date_s = str(body.get("date") or util.today_str())[:10]
             try:
+                from . import interventions as _iv
                 item = app.screen.rate_item(
                     date_s, str(body.get("item_id") or ""),
                     str(body.get("label") or ""),
                     body.get("strength"))
+                # 这是一次**真正需要人**的动作（AI 没把握才请你复核）→ 计入 50 次预算
+                _iv.human("rate", n=1, date_s=date_s, detail=[{
+                    "why": "人工复核「{}」判为 {}".format(
+                        (item or {}).get("title", "")[:40]
+                        if isinstance(item, dict) else "", str(body.get("label")))}])
                 learned_n = len(app.screen.lexicon_rows(10000))
                 return self._json({"ok": True, "item": item,
                                    "learned_total": learned_n,
+                                   "budget": _iv.status(date_s=date_s),
                                    "payload": app.news_payload(date_s)})
             except ValueError as e:
                 return self._err(str(e))
+        elif path == "/api/calibration/backfill":
+            if app.demo:
+                return self._err("演示库只读，无需历史回填", 403)
+            days = int(body.get("days") or 20)
+            max_pages = int(body.get("max_pages") or 700)
+            return self._json(app.start_calib_backfill(days=days,
+                                                       max_pages=max_pages))
+        elif path == "/api/event-model/run":
+            if app.demo:
+                return self._err("演示库只读，无需建模", 403)
+            return self._json(app.start_event_model(
+                days=int(body.get("days") or 400),
+                select=bool(body.get("select", True)),
+                warmup=int(body.get("warmup") or 60)))
         elif path == "/api/history/extend":
             if app.demo:
-                return self._err("演示库只读，无需延伸历史")
+                return self._err("演示库只读，无需延伸历史", 403)
             if not app._busy.acquire(blocking=False):
                 return self._err("系统忙，请稍候", 409)
             try:
@@ -502,15 +975,36 @@ class Handler(BaseHTTPRequestHandler):
                 res = app.market.extend_index_history(years=years)
                 return self._json({"ok": True, "result": res})
             except Exception as e:
-                return self._err("历史延伸失败：" + str(e))
+                return self._err("历史延伸失败：" + str(e), 500)
             finally:
                 app._busy.release()
+        elif path == "/api/config/set":
+            if app.demo:
+                return self._err("演示库只读，不写配置", 403)
+            from . import configedit
+            res = configedit.apply_changes(
+                changes=body.get("set") or {},
+                resets=body.get("reset") or [],
+                confirm_sensitive=bool(body.get("confirm_sensitive")))
+            if res.get("ok"):
+                app._invalidate()          # 参数变了 → 清掉所有快照缓存
+            return self._json(dict(res, backups=[
+                b["name"] for b in configedit.list_backups()][:10]))
+        elif path == "/api/config/rollback":
+            if app.demo:
+                return self._err("演示库只读，不写配置", 403)
+            from . import configedit
+            res = configedit.rollback(str(body.get("name") or "") or None)
+            if res.get("ok"):
+                app._invalidate()
+            return self._json(dict(res, backups=[
+                b["name"] for b in configedit.list_backups()][:10]))
         elif path == "/api/news/direction":
             # (已停用：方向判断由 AI 自动记录，不再要求用户输入)
             return self._err("方向判断已由 AI 自动记录，无需手动保存", 400)
         elif path == "/api/news/search/export":
             if app.demo:
-                return self._err("演示库只读")
+                return self._err("演示库只读", 403)
             date_s = str(body.get("date") or util.today_str())[:10]
             n = len(app.screen.items_for(date_s))
             screening.ensure_daily_news_queue(date_s, n > 0, n,
@@ -520,13 +1014,67 @@ class Handler(BaseHTTPRequestHandler):
                                "payload": app.news_payload(date_s)})
         elif path == "/api/news/search/import":
             if app.demo:
-                return self._err("演示库只读")
-            m = screening.import_search_results(cfg=app.cfg)
+                return self._err("演示库只读", 403)
+            # 走 auto_merge 包装：合并成功记 auto（不占人工额度），
+            # 有结果却合并不了才记 human 并说明原因。
+            m = screening.auto_merge_search_results(
+                cfg=app.cfg, date_s=str(body.get("date") or util.today_str())[:10])
             return self._json({"ok": True, "merge": m,
                                "payload": app.news_payload(
                                    str(body.get("date") or util.today_str())[:10])})
+        elif path == "/api/sources/probe":
+            # 真实探活：让"安静的源"能证明自己已恢复，从而把降级提示灭掉。
+            # 这是"降级提示永不消失"的根治手段（2026-09-16）。
+            from . import api_usage as _au
+            names = body.get("names")
+            res = _au.probe_sources(names=names, cfg=app.cfg)
+            app._invalidate()
+            return self._json({"ok": True, "probe": res,
+                               "usage": app.market.usage()})
         else:
             self._err("404 not found: " + path, 404)
+
+
+def code_stamp():
+    """当前**磁盘上**代码的指纹（用于判断"在跑的服务是不是旧代码"）。
+
+    为什么需要它（2026-09-15 事故）：服务是常驻进程，`fundai_start_hidden.py` 看到
+    端口已被占用就静默退出 —— 于是**改完代码不重启就永远跑旧的**。这次前端已经更新、
+    后端还是几小时前的版本，新接口全 404，界面看着像"卡住/打不开"。
+    指纹由所有 `.py` 的 (相对路径, mtime, size) 计算，服务启动时取一次，
+    守护脚本每次保活时对比：不一致就重启服务。
+    """
+    import hashlib
+    from pathlib import Path as _P
+    root = _P(util.PROJECT).resolve()
+    h = hashlib.sha256()
+    skip_dirs = {"__pycache__", "build", "dist", ".git", "tests", "tools",
+                 "_sandbox", "_test_tmp", "fundai-github"}
+    files = []
+    for p in sorted(root.rglob("*.py")):
+        rel = p.relative_to(root)
+        # **只统计源码**：`__pycache__/*.pyc` 每次启动都会被重写，若算进指纹，
+        # 指纹会每跑一次就变一次 → 守护脚本会永远判"代码已更新"并反复重启
+        # （2026-09-15 踩到：服务起了又被自己换掉）。
+        if any(part in skip_dirs for part in rel.parts):
+            continue
+        files.append(p)
+    # 前端静态资源也算指纹：改 JS 同样需要让浏览器拿到新版本
+    for name in ("app.js", "index.html", "style.css"):
+        q = root / "fundai" / "static" / name
+        if q.exists():
+            files.append(q)
+    for p in files:
+        try:
+            st = p.stat()
+            h.update("{}|{}|{}|".format(
+                p.relative_to(root).as_posix(), int(st.st_mtime), st.st_size).encode())
+        except OSError:
+            continue
+    return h.hexdigest()[:16]
+
+
+_STARTED_AT = None
 
 
 def make_server(cfg, db_path, demo=False, port=None, host=None):
@@ -539,6 +1087,10 @@ def make_server(cfg, db_path, demo=False, port=None, host=None):
     else:
         datasource.probe_akshare_safe()
     app = ApiApp(cfg, db_path, demo=demo)
+    global _STARTED_AT
+    _STARTED_AT = util.now_iso()
+    app.code_stamp = code_stamp()
+    app.started_at = _STARTED_AT
     Handler.app = app
     host = host or cfg.get("server", {}).get("host", "127.0.0.1")
     port = int(port or cfg.get("server", {}).get("port", 8787))

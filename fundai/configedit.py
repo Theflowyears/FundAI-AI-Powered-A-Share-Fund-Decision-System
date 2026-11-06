@@ -260,10 +260,19 @@ def apply_changes(changes=None, resets=(), confirm_sensitive=False, path=None):
         if key in RESTART_KEYS:
             restart.append(key)
     # 4) 立刻生效（丢弃 mtime 缓存）
-    try:
-        settings.reload_config(path)
-    except Exception as e:
-        warnings.append("已写入，但重新加载配置时报错：{}".format(e))
+    #    只有改的是**当前生效的那份配置**时才动全局缓存。写别的文件（测试用的临时
+    #    config、批量脚本改副本）如果把内容灌进 `settings._cache`，之后任何
+    #    `load_config()` 都会拿到"路径=真实配置 / 内容=临时文件"的错配快照，
+    #    表现成"配置看着没生效"或"参数面板显示的数字和文件里不一样"
+    #    （2026-09-15 由 tests/test_param_docs.py 在全套跑时暴露）。
+    if str(path) == str(settings.CONFIG_PATH):
+        try:
+            settings.reload_config(path)
+        except Exception as e:
+            warnings.append("已写入，但重新加载配置时报错：{}".format(e))
+    else:
+        warnings.append("改动已写入 {}（不是当前生效的 config.json，未刷新全局缓存）"
+                        .format(Path(path).name))
     return {"ok": True, "applied": applied, "errors": [],
             "restart_required": restart, "warnings": warnings,
             "backup": backup}
@@ -285,7 +294,8 @@ def rollback(backup_name=None, path=None):
         return {"ok": False, "errors": ["备份内容不可用：{}".format(e)]}
     _make_backup(path)
     util.write_json_atomic(path, data)
-    settings.reload_config(path)
+    if str(path) == str(settings.CONFIG_PATH):      # 同上：只刷新生效中的那份
+        settings.reload_config(path)
     return {"ok": True, "restored_from": src.name}
 
 

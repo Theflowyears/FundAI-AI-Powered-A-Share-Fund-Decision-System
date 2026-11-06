@@ -64,8 +64,24 @@ def build_base(cfg=None, use_cache=True, jobs=None):
     """
     cfg = cfg or settings.load_config()
     cache_path = util.cache_file(BASE_CACHE)
-    idx_cache = util.cache_file("kline_000300.SH.json")
-    sig = _sig(idx_cache)
+    # 2026-10 修：旧代码监视 "kline_000300.SH.json"，但缓存实际落盘名经
+    # `_kline_cache_path` 消毒后是 "kline_000300_SH.json"（点变下划线）——
+    # 签名永远 "na"，harness_base.json 永不失效，研究窗口会停在旧日期。
+    # 现在用 Market 的真实缓存键（含东财 secid 兜底键）计算签名。
+    from fundai.datasource import Market
+    mkt = Market(cfg)
+    idx_cfg = ((cfg.get("market") or {}).get("index") or {})
+    # 同时监视智兔代码与东财 secid 两个缓存键（`_index_cache_items` 会合并两者；
+    # 只盯 `_index_key()` 会在无 token/切换通道时漏掉另一份更新）。
+    idx_keys = [idx_cfg.get("zhitu_code"), idx_cfg.get("eastmoney_secid")]
+    idx_paths = []
+    for k in idx_keys:
+        if not k:
+            continue
+        p = mkt._kline_cache_path(str(k))
+        if p not in idx_paths:
+            idx_paths.append(p)
+    sig = _sig(*idx_paths)
     if use_cache:
         c = util.load_json(cache_path, {}) or {}
         if c.get("sig") == sig and c.get("days"):

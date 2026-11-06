@@ -37,10 +37,10 @@ TEXT_RULES = [
     (re.compile(r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}",
                 re.IGNORECASE), "TOKEN-REDACTED"),
     # Windows 用户目录（含 JSON 转义的双反斜杠、以及 8.3 短名 THEFLO~1 一类）
-    (re.compile(r"C:\\\\+Users\\\\+[^\\\\\"\s]+"), r"C:\\Users\\<user>"),
+    (re.compile(r"C:\\\\+Users\\\\+[^\\\\\"\s]+"), r"C:\Users\<user>"),
     (re.compile(r"C:\\+Users\\+[^\\\"\s]+"), r"C:\Users\<user>"),
-    (re.compile(r"/Users/[^/\"\s]+"), "/Users/<user>"),
-    (re.compile(r"/home/[^/\"\s]+"), "/home/<user>"),
+    (re.compile(r"/Users/<user>/\"\s]+"), "/Users/<user>"),
+    (re.compile(r"/home/<user>/\"\s]+"), "/home/<user>"),
     # 本机项目绝对路径（审计/用量产物会回显工作目录）：统一替换成占位符，
     # 避免把"发布者把这套东西装在哪个盘、哪个目录"一起发出去
     (re.compile(r"[A-Za-z]:\\\\+[^\\\"\s]*?(?:DSHtemporary|fund200ai)[^\\\"\s]*"),
@@ -53,7 +53,7 @@ TEXT_SUFFIX = {".json", ".md", ".txt", ".log", ".py", ".bat", ".cfg", ".ini",
                ".js", ".html", ".css", ".yml", ".yaml", ".toml"}
 SKIP_DIRS = {".git", "__pycache__"}
 # 脱敏后的占位符：出现这些即视为"已处理"，不再报警。
-# 前两个是替换结果；`/Users/`、`/home/` 是**本文件自己的规则文本**（自指误报）。
+# 前两个是替换结果；`/Users/<user>/home/<user> 是**本文件自己的规则文本**（自指误报）。
 _ALLOW = ("<user>", "REDACTED", "<project-dir>", "/Users/", "/home/")
 
 

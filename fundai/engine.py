@@ -8,15 +8,19 @@
 - backtest() / run_demo()：包装 simulate
 - state_payload() / fund_status()：供 Web 界面取数
 """
+import json
 import math
 
-from . import analysis, indicators, news as newsmod, screening, settings, strategy, util
+from . import (analysis, indicators, microstructure, news as newsmod,
+               risk_overlay, screening, settings, strategy, util)
 from .datasource import Market
 from .ledger import Ledger
 from .util import DataError
 
 HALF_YEAR_DAYS = 183
 POOL_STATE_FILE = util.data_file("pool_state.json")
+# 方向中文名（与 screening.DIR_TEXT 同一份口径，供消息/日志文案复用）
+DIR_TEXT_CN = screening.DIR_TEXT
 
 # 各大板块代表基金（用于每日“板块全景”评价）：每个板块取一只代表性 C 类联接基金
 SECTOR_PROXIES = [
@@ -41,23 +45,46 @@ SECTOR_PROXIES = [
 ]
 
 
-def combine_score(cfg, tech, news_score):
-    """量化分(tech) 与 消息分(news) 按 news_weight 权重合成最终评分。
+def combine_score(cfg, tech, news_score, micro_score=None, w_news=None,
+                  w_micro=None):
+    """量化分(tech) + 消息分(news) + 微观情绪分(micro) 三方加权合成。
 
-    消息分先按 strategy.news_score_cap（默认 ±25）限幅：词典/人工打分最远可到 ±100，
-    若不限幅会凭 ±几十分的消息面单方向撬动 ±11pp+ 的权益仓位（audit P1-11）。
+    - 消息分先按 strategy.news_score_cap（默认 ±25）限幅：词典/人工打分最远可到 ±100，
+      若不限幅会凭 ±几十分的消息面单方向撬动 ±11pp+ 的权益仓位（audit P1-11）；
+    - 微观情绪分（涨停池/炸板率/晋级率/涨跌停结构，借鉴 Cailianpress-Feishu-Bot
+      复盘算法）按 strategy.micro_score_cap（默认 ±30）限幅，权重
+      strategy.micro_weight（默认 0.15，从量化份额中划拨）；
+    - 向后兼容：micro_score=None（回测/演示/接口失败/关闭）时与旧二方口径逐位一致。
     """
     st = cfg.get("strategy", {}) or {}
-    w = float(st.get("news_weight", 0.35))
-    if news_score is None:
-        return int(round(tech))
+    # 动态权重（analysis.dynamic_weights 按消息净情绪/情绪分位/波动分位给出，有界）；
+    # 显式传入 w_news/w_micro 时优先（回测/研究用）
+    w = float(st.get("news_weight", 0.35) if w_news is None else w_news)
+    wm = float(st.get("micro_weight", 0.15) if w_micro is None else w_micro) or 0.0
     cap = float(st.get("news_score_cap", 25) or 25)
+    if micro_score is None or wm <= 0:
+        if news_score is None:
+            return int(round(tech))
+        n = float(news_score)
+        if cap > 0:
+            n = util.clamp(n, -cap, cap)
+        return int(round(tech * (1.0 - w) + n * w))
+    m = float(micro_score)
+    mcap = float(st.get("micro_score_cap", 30) or 0)
+    if mcap > 0:
+        m = util.clamp(m, -mcap, mcap)
+    wm = util.clamp(wm, 0.0, 0.30)
+    if news_score is None:
+        return int(round(tech * (1.0 - wm) + m * wm))
+    n = float(news_score)
     if cap > 0:
-        news_score = util.clamp(float(news_score), -cap, cap)
-    return int(round(tech * (1.0 - w) + float(news_score) * w))
+        n = util.clamp(n, -cap, cap)
+    return int(round(tech * (1.0 - w - wm) + n * w + m * wm))
 
 
 class Engine:
+    ORDER_EXPIRE_DAYS = 5   # 回放中挂单连续无净值多少个交易日即作废（释放资金占用）
+
     def __init__(self, cfg, ledger, market=None, demo=False):
         self.cfg = cfg
         self.ledger = ledger
@@ -73,19 +100,35 @@ class Engine:
 
     # ---------------- 账户元信息 ----------------
     def ensure_account(self):
+        """对齐账户元信息：**本金来自账本（真实投入），目标永远由「本金 × 倍数」推导**。
+
+        为什么目标每次都重算（2026-09-11 用户要求"目标 = 投入 × 1.3，其他算法不变"）：
+        目标是一个**计划**，不是历史事实——用户把 `account.target_multiple` 从 1.5 改成 1.3，
+        或把本金从 1000 改成 2000，界面与回测里的目标、进度、还差多少都必须立刻跟着变，
+        不需要重新 `init`。而本金相反：账本里的 `initial_cash` 记录的是**实际投进去多少钱**，
+        配置改动不该凭空改变已发生的事实（要改本金请用 `python app.py init --cash N`）。
+        """
         meta = self.ledger.account_meta() or {}
         changed = False
         if not meta.get("start_date"):
             meta["start_date"] = util.today_str()
             meta["end_date"] = util.add_days(util.today_str(), HALF_YEAR_DAYS)
             changed = True
-        if meta.get("target_value") is None:
-            meta["target_value"] = float(self.acct.get("target_value", 1500))
-            changed = True
+        cfg_initial, cfg_target, mult = settings.account_plan(self.cfg)
         if meta.get("initial_cash") is None:
-            meta["initial_cash"] = float(self.acct.get("initial_cash", 1000))
+            meta["initial_cash"] = cfg_initial
             changed = True
-        meta["name"] = self.acct.get("name", "AI基金1000挑战1500实验")
+        # 目标：以**账本本金**（真实投入）× 配置倍数 为准
+        try:
+            base = float(meta.get("initial_cash") or cfg_initial)
+        except (TypeError, ValueError):
+            base = cfg_initial
+        target = round(base * mult, 2)
+        if abs(float(meta.get("target_value") or 0) - target) > 0.005:
+            meta["target_value"] = target
+            changed = True
+        meta["target_multiple"] = mult
+        meta["name"] = self.acct.get("name", meta.get("name") or "FundAI 量化基金决策")
         meta["exec_mode"] = self.acct.get("exec_mode", "manual")
         if changed or meta != (self.ledger.account_meta() or {}):
             self.ledger.set_account_meta(meta)
@@ -202,7 +245,11 @@ class Engine:
         need_days = int(sc.get("min_history_days", 120))
         usage = self.market.usage()
         limit = usage["daily_limit"]
-        base_calls = usage["calls_today"]
+        # 配额守卫必须只看**有配额的那一条通道**（智兔），不能用全部通道的调用数：
+        # 东财/新浪/腾讯没有日配额，把它们算进来会让"智兔还够用"被误判成"配额不足"。
+        # 2026-09-11 审计实测：当天全部通道 154 次（其中智兔仅个位数）就触发了
+        # "今日智兔配额不足（已用 154/200）"，导致 refresh-pool 直接拒绝服务。
+        base_calls = int(usage.get("zhitu_today") or 0)
         if limit is not None and len(uni) > limit - base_calls - 10:
             return {"ok": False,
                     "message": "今日智兔配额不足（已用 {}/{}/日），请明天再筛选".format(
@@ -340,8 +387,9 @@ class Engine:
             return None
         usage = self.market.usage()
         uni_n = len(settings.universe_of(self.cfg))
+        used_zt = int(usage.get("zhitu_today") or 0)   # 只算智兔（唯一有配额的通道）
         if usage["daily_limit"] is not None and \
-                usage["daily_limit"] - usage["calls_today"] - uni_n - 20 < 0:
+                usage["daily_limit"] - used_zt - uni_n - 20 < 0:
             self.market.warnings.append(
                 "备选池需要刷新，但今日智兔配额不足，将自动顺延到明天")
             return None
@@ -366,14 +414,25 @@ class Engine:
 
     # ---------------- 组合估值与结构 ----------------
     def _valuation(self, nav_map, ledger=None):
-        """nav_map: {code: (nav_date, nav)} 最近可用净值。"""
+        """nav_map: {code: (nav_date, nav)} 最近可用净值。
+
+        **2026-09-16 关键约束**：缺价的持仓**不再静默当 0 元**。
+        旧实现 `if not pair or not pair[1]: continue` —— 把"没取到价"和"价值为 0"
+        混为一谈，于是估值凭空缩水（实测 1007.42 → 421.00），
+        而这个被低估的 total 直接喂给风控，算出 58.2% 的假回撤，
+        误触发"权益降到 25% + 5 天防御冷却"。
+        现在：缺价照旧不计入市值（无法凭空造数），但会**如实报出来**
+        （`complete=False` + `missing` 列表），让上游据此拒绝做风控决策。
+        """
         ledger = ledger or self.ledger
         cash = ledger.cash()
         pos = ledger.positions()
         mv_by, mv_eq, mv_bond = {}, 0.0, 0.0
+        missing = []
         for code, shares in pos.items():
             pair = nav_map.get(code)
             if not pair or not pair[1]:
+                missing.append(code)
                 continue
             mv = shares * pair[1]
             mv_by[code] = mv
@@ -383,7 +442,10 @@ class Engine:
                 mv_eq += mv
         total = cash + mv_eq + mv_bond
         return {"cash": cash, "mv_by": mv_by, "mv_eq": mv_eq,
-                "mv_bond": mv_bond, "total": total}
+                "mv_bond": mv_bond, "total": total,
+                # complete=False 表示"有持仓没取到价、total 被低估"，风控/研判必须当心
+                "complete": not missing, "missing": missing,
+                "missing_value_hint": len(missing)}
 
     def _ctx(self, date_s, valuation, nav_map, ledger=None, mom_map=None):
         """构建 strategy.plan 需要的账户状态（含止损/止盈所需的浮盈浮亏）。"""
@@ -442,11 +504,58 @@ class Engine:
             "initial": float(meta.get("initial_cash")
                              or self.acct.get("initial_cash", 500)),
             "peak_total": ledger.peak_total(),
+            # 估值完整性：缺价时 strategy.plan 会**跳过**回撤/本金亏损类风控，
+            # 避免用被低估的 total 算出假回撤（2026-09-16 事故：58.2% 假回撤）。
+            "valuation_complete": bool(valuation.get("complete", True)),
+            "valuation_missing": list(valuation.get("missing") or []),
             "funds_mom": mom_map or {},
             "equity_codes": self._eq_codes(),
             "names": {f["code"]: (f.get("name") or f["code"])
                       for f in self._pool_items()},
+            # 反应型风控：跌破关键均线的减仓比例（只用已实现收盘价，不预测）
+            "ma_break": self._ma_break_cut(date_s),
         }
+
+    def _ma_break_cut(self, date_s):
+        """反应型风控：收盘跌破 MA20/MA60/MA120 → 每跌破一条减仓 step（上限 max_cut）。
+
+        只用**已实现**的收盘价与均线，不含任何预测；阈值见 config.strategy.risk。
+        返回 {"cut": 0~max_cut, "note": "…", "close":, "ma20":, "ma60":, "ma120":}
+        """
+        rk = (self.cfg.get("strategy") or {}).get("risk") or {}
+        step = float(rk.get("ma_break_step", 0.20) or 0.0)
+        max_cut = float(rk.get("ma_break_max", 0.40) or 0.0)
+        skip20 = bool(rk.get("ma_break_skip_ma20", True))
+        out = {"cut": 0.0, "note": "", "close": None, "ma20": None,
+               "ma60": None, "ma120": None, "floor": float(
+                   rk.get("ma_break_floor", 0.40) or 0.0)}
+        if step <= 0:
+            return out
+        try:
+            idx = self.market.index_history(
+                need_from=util.add_days(date_s, -200)) or []
+        except DataError:
+            return out
+        seq = [x for x in idx if x[0] <= date_s]
+        if len(seq) < 20:
+            return out
+        closes = [x[1] for x in seq]
+        close = closes[-1]
+        out["close"] = round(close, 2)
+        hits = []
+        # 十年实测：MA20 破位噪声大（whipsaw），默认只用 MA60/MA120
+        for n, key in ((20, "ma20"), (60, "ma60"), (120, "ma120")):
+            if len(closes) < n:
+                continue
+            ma = sum(closes[-n:]) / float(n)
+            out[key] = round(ma, 2)
+            if close < ma and not (skip20 and n == 20):
+                hits.append("MA{}".format(n))
+        if hits:
+            out["cut"] = min(max_cut, step * len(hits))
+            out["note"] = "收盘 {:.0f} 跌破 {} → 减仓 {:.0%}".format(
+                close, "、".join(hits), out["cut"])
+        return out
 
     def _fund_factors(self, date_s):
         """进攻池内各基金的多因子（借鉴“动量+波动+均线乖离+RSI”的多因子思路）。
@@ -472,11 +581,16 @@ class Engine:
             rets = [closes[i] / closes[i - 1] - 1.0 for i in range(-21, 0)]
             mean = sum(rets) / len(rets)
             vol = (sum((r - mean) ** 2 for r in rets) / len(rets)) ** 0.5
+            # 组合层 min_var 需要更长的协方差样本；数据不足时退回 20 日
+            rets60 = rets
+            if len(closes) >= 61 and all(closes[i] for i in range(-61, 0)):
+                rets60 = [closes[i] / closes[i - 1] - 1.0
+                          for i in range(-60, 0)]
             ma20 = sum(closes[-20:]) / 20.0
             bias = closes[-1] / ma20 - 1.0 if ma20 else 0.0
             rsi = indicators.rsi(closes, 14)
             out[code] = {"mom": mom, "mom5": mom5, "vol": vol,
-                         "bias": bias, "rsi": rsi}
+                         "bias": bias, "rsi": rsi, "rets": rets60}
         return out
 
     def _sector_brief(self, date_s):
@@ -536,16 +650,26 @@ class Engine:
         return bool(until) and date_s <= until
 
     def _update_risk_lock(self, plan, date_s, score=None, ledger=None):
-        """组合级风控触发后，锁定 rearm_days（默认 7）个交易日为防御期（期间权益≤25%）。
+        """组合级风控触发后，锁定 rearm_days（默认 5）个交易日为防御期（期间权益≤25%）。
 
         冷却到期后自动解除、恢复正常仓位规则；评分平滑（若开启）本身即可
         避免到期瞬间满仓追涨。冷却期内若触发单只止损/止盈或评分 > rearm_bull_score，
         strategy.plan 会按“防御期例外”允许直接调仓。单只止损/止盈不触发组合级防御锁。
+
+        **迟滞（2026-09-11 新增）**：组合级判据（自峰值回撤 / 相对本金亏损）在账户
+        回到峰值前会天天成立，若只做"冷却到期即恢复"，冷却一结束就会立刻重新触发，
+        等于永久防守。因此把"是否允许再次触发"（armed）持久化在账本 meta 里，
+        由 strategy.plan 依据回撤是否收敛来重新武装。
         """
         ledger = ledger or self.ledger
         kind = plan.get("risk_kind")
+        if "risk_armed" in plan and plan.get("risk_armed") is not None:
+            try:
+                ledger.set_meta("risk_armed", "1" if plan["risk_armed"] else "0")
+            except Exception:
+                pass
         if kind in ("portfolio_stop", "trailing"):
-            days = max(0, int(self.risk_cfg.get("rearm_days", 7)))
+            days = max(0, int(self.risk_cfg.get("rearm_days", 5)))
             ledger.set_risk_lock(util.add_trading_days(date_s, days))
             return
         until = ledger.risk_lock_until()
@@ -617,6 +741,17 @@ class Engine:
                               "shares": res["executed"],
                               "amount": res["net"], "fee": res["fee"],
                               "nav": nav, "confirm_date": C})
+        # 留痕：自动确认替你省掉了"逐单回填"的人工动作（用户要求人工 ≤50 次/天）。
+        # 这里只记 auto（不占额度），明细里写清是哪几单、按哪天净值成交，
+        # 出问题时仍可从 /api/interventions 追溯。
+        if fills:
+            try:
+                from . import interventions as _iv
+                _iv.auto("order", n=len(fills), date_s=date_s, detail=[{
+                    "why": "T+1 自动确认 {} 笔成交（无需人工回填）".format(len(fills)),
+                    "ids": [f["id"] for f in fills][:20]}])
+            except Exception:
+                pass
         return fills
 
     def _fill_order(self, o, fill_date, nav, ledger=None):
@@ -720,13 +855,143 @@ class Engine:
                                 "理由：{}）；运行 python app.py search-queue 查看，由 DSH 本地搜索"
                                 "回填 data/search_results.json 后系统自动合并。".format(
                                     (q or {}).get("reason", "")))
-            m = screening.import_search_results(cfg=self.cfg)
-            if m.get("added"):
-                msgs_all.append("【本地搜索回填】" + m.get("note", ""))
+            # 自动合并搜索回填结果（2026-09-16）：旧流程要点【合并搜索回填结果】按钮
+            # 才生效，属于"纯粹等人点一下"的动作 —— 用户要求人工 ≤50 次/天，
+            # 这类动作必须在研判前自动完成，有结果却合并不了才回来找人。
+            merged = screening.auto_merge_search_results(cfg=self.cfg, date_s=date_s)
+            if merged.get("added"):
+                msgs_all.append("【本地搜索回填·自动合并】" + merged.get("note", ""))
         except Exception as e:
             msgs_all.append("消息筛选/学习处理异常（不影响主流程）：{}".format(e))
 
+    # ================= AI 次日方向判断 · 自动记录与自检结算 =================
+    # 为什么单独抽出来（2026-09-12 用户反馈“每天跑完诊断不再自动记录 AI 次日方向”）：
+    #   原先“记录方向 + 结算命中”只嵌在 run_daily 主流程的中段，且 run_daily 开头有
+    #   `has_record(D)` 短路——当日已经出过研判报告（晚上补拍快照、或白天先手动跑过一次）
+    #   就直接 return，于是当天既不会记录方向、也不会结算上一条待结算判断；
+    #   而 set_direction 外面套的 `except Exception: pass` 还会把写库失败一起吞掉，
+    #   失败在日志里完全不可见。现在：一条每日任务链（run_daily）+ 一个可独立调用的
+    #   `app.py direction-check` 命令共用一个入口，短路路径也会结算自检。
+    # 口径不变：方向仍由合成评分（平滑后）经 analysis.view_of 推导，信心仍是
+    #   neutral 0.5 / 其余 clamp(|score|/100)×0.5+0.5；命中判定仍由
+    #   screening.resolve_directions 负责（看多=涨、看空=跌、中性=|涨跌|≤0.3%）。
+    @staticmethod
+    def ai_direction(score):
+        """合成评分（平滑后）→ (方向, 信心)。口径与首页“观点”完全同源。
+
+        看多 = 评分 ≥ +25（谨慎看多及以上），看空 = 评分 ≤ −25，其余中性；
+        信心：中性固定 0.5，其余 clamp(|评分|/100)×0.5+0.5。
+        """
+        view = analysis.view_of(int(score))["key"]
+        ai_dir = ("bull" if view in ("hot_bull", "bull")
+                  else "bear" if view in ("hot_bear", "bear") else "neutral")
+        ai_conf = (0.5 if ai_dir == "neutral" else
+                   float(util.clamp(abs(int(score)) / 100.0, 0.0, 1.0) * 0.5 + 0.5))
+        return ai_dir, ai_conf
+
+    def direction_record(self, date_s, force=False, settle_with_chg=None,
+                         settle_date=None):
+        """记录“date_s 收盘给出的次日方向”并结算到期判断（幂等）。
+
+        - ``date_s``：判断日（= 给出判断那天的交易日）。若传入的是**非交易日**
+          （周末/节假日），自动归一到“提供研判的那个交易日”入库——同一份收盘数据
+          只留一条判断，避免“周六、周日各记一条”把自检样本重复计数；
+        - ``force=False``：当日已有记录且方向未变 → 保留首次判断（不覆盖，避免同日重跑漂移）；
+          方向变了（例如当日重跑研判改了结论）→ 覆盖；
+        - ``settle_with_chg``：结算用的当日涨跌；给 None 时只记录、不结算；
+        - 返回 dict（含记录与结算结果），异常不抛出——调用方负责提示，绝不阻断主流程。
+        """
+        out = {"date": date_s, "direction": None, "confidence": None,
+               "recorded": False, "settled": 0, "skipped": None, "error": None}
+        try:
+            scr = self._screen()
+            # 判断口径来自“给出判断那天的收盘研判”：判断日就是交易日 → 取当日记录；
+            # 判断日是**非交易日**（周末/节假日仍会跑每日任务）→ 沿用最近一个交易日的
+            # 研判，并把判断**记到那个交易日名下**（AI 给的是“下一个交易日的方向”，
+            # 与库内既有语义完全一致，也不会重复计数）。
+            dates = [date_s]
+            if not self.ledger.has_record(date_s):
+                try:
+                    dates.append(util.prev_trading_day(str(date_s)[:10]))
+                except Exception:
+                    pass
+            rec, judge_date, score = None, None, None
+            for d in dates:
+                rec = self.ledger.get_record(d)
+                if rec:
+                    judge_date = d
+                    break
+            if rec:
+                if rec.get("calc"):
+                    try:
+                        _stored = (json.loads(rec["calc"]) or {}).get("direction")
+                    except Exception:
+                        _stored = None
+                    if _stored and _stored.get("score") is not None:
+                        # 已存过当日方向口径（run_daily 写入 calc["direction"]）
+                        # → 与首次判断逐位一致，不重算
+                        score = int(_stored["score"])
+                if score is None and rec.get("market_score") is not None:
+                    score = int(rec["market_score"])   # 兼容旧记录
+            if score is None:
+                out["skipped"] = "无可用研判记录（先运行 python app.py run-daily）"
+            else:
+                out["from_date"] = judge_date
+                out["filed_as"] = judge_date       # 判断入库的“判断日”
+                out["from_date_is_prev"] = (judge_date != str(date_s)[:10])
+                ai_dir, ai_conf = self.ai_direction(score)
+                prev = scr.direction(judge_date) or {}
+                if prev and prev.get("dir") == ai_dir and not force:
+                    out["kept"] = True          # 方向未变：保留首次判断（created 不变）
+                else:
+                    scr.set_direction(judge_date, ai_dir, ai_conf)
+                    out["recorded"] = True
+                cur = scr.direction(judge_date) or {}
+                out["direction"] = cur.get("dir") or ai_dir
+                out["confidence"] = cur.get("confidence")
+                out["score"] = score
+            # 结算：用给到的涨跌结算到期判断（判断日 > settle_date 的不结算）
+            if settle_with_chg is not None:
+                out["settled"] = scr.resolve_directions(
+                    str(settle_date or date_s)[:10], settle_with_chg)
+        except Exception as e:
+            out["error"] = "{}: {}".format(type(e).__name__, str(e)[:160])
+        return out
+
     # ================= 每日例行（真实/在线） =================
+    def _catchup_snapshot(self, D):
+        """当日已有研判但当晚跑早了（净值没出齐没拍成快照）：净值齐备后补拍。
+
+        只补快照，不重跑研判/不下单——配合每日定时 run-daily，晚间自动“补拍”，
+        资产曲线不再因“当天没再跑一次”留洞。返回补拍说明或 None（不齐/已有）。
+        """
+        if self.demo or self.ledger.has_snapshot(D):
+            return None
+        held = self.ledger.positions()
+        if not held:
+            return None
+        nav_map = {}
+        for code in self._pool_codes():
+            try:
+                seq = self.market.fund_history(code, need_from=util.add_days(D, -55))
+            except DataError:
+                return None
+            latest = [x for x in seq if x[0] <= D]
+            if latest:
+                nav_map[code] = (latest[-1][0], latest[-1][1])
+        if not all(nav_map.get(c) and nav_map[c][0] == D for c in held):
+            return None                      # 持仓净值未出齐 → 明晚/下次再补
+        val = self._valuation(nav_map)
+        try:
+            idx = self.market.index_history(need_from=util.add_days(D, -12)) or []
+            close = next((c for d, c, v in reversed(idx) if d == D), None)
+        except DataError:
+            close = None
+        self.ledger.add_snapshot(D, val["cash"], val["mv_eq"], val["mv_bond"],
+                                 val["total"], self.ledger.fees(), close, "补拍")
+        self.ledger.bump_peak(val["total"])
+        return "净值已齐，补拍当日快照（总资产 ¥{:.2f}）".format(val["total"])
+
     def run_daily(self, force=False):
         if self.demo:
             return {"status": "error", "message": "演示库只读，请使用正式库运行每日研判"}
@@ -754,9 +1019,50 @@ class Engine:
             fills = self._auto_confirm(D)
             if fills:
                 msgs_all.append("已自动确认 {} 笔到期 T+1 订单按净值入账".format(len(fills)))
+        # 午间盘中诊断（12:00 任务）的收盘结算：用「收盘 vs 11:30」判定午间观点命中
+        try:
+            from . import intraday as _intraday
+            _s = _intraday.settle(D)
+            if _s.get("ok"):
+                msgs_all.append("午间诊断结算：{}观点{}（下午 {:+.2%}）".format(
+                    _s.get("view"), "命中" if _s.get("hit") else "未中",
+                    _s.get("pm_chg") or 0.0))
+        except Exception:
+            pass
         if not force and self.ledger.has_record(D):
+            extra = self._catchup_snapshot(D)
+            if extra:
+                msgs_all.append(extra)
+            # 当日已有研判 → 主流程短路，但“AI 次日方向 + 自检命中率”必须照常跑：
+            # ① 结算到期判断（用当日涨跌）；② 补记当日方向（若之前那次没记上）。
+            # 这是 2026-09-12 用户反馈“每天跑完诊断不再自动记录方向/命中率”的根因修复：
+            # 此前这两步只写在主流程中段，被本短路径整体跳过。
+            # 注意：`chg` 要到下面主流程才赋值（本短路径先返回），所以此处**必须**
+            # 自己从 `st` 取当日涨跌——直接写 `chg` 会 UnboundLocalError。
+            try:
+                _dc = self.direction_record(
+                    D, settle_with_chg=st.get("chg_pct"), settle_date=D)
+                if _dc.get("settled"):
+                    msgs_all.append("已自动结算 {} 条 AI 次日方向判断（对照 {} 大盘走势），"
+                                    "命中率见“消息与进化”页".format(_dc["settled"], D))
+                if _dc.get("recorded"):
+                    msgs_all.append("已补记 {} 的 AI 次日方向判断：{}（信心 {:.0%}）".format(
+                        D, DIR_TEXT_CN.get(_dc.get("direction"), _dc.get("direction") or "—"),
+                        float(_dc.get("confidence") or 0)))
+                elif _dc.get("kept"):
+                    msgs_all.append("AI 次日方向判断当日已记录：{}（保持不变）".format(
+                        DIR_TEXT_CN.get(_dc.get("direction"), _dc.get("direction") or "—")))
+                if _dc.get("error"):
+                    msgs_all.append("AI 次日方向自检异常（不影响主流程）：{}".format(
+                        _dc["error"]))
+            except Exception as e:
+                msgs_all.append("AI 次日方向自检异常（不影响主流程）：{}".format(e))
             return {"status": "noop", "date": D, "fills": fills,
-                    "message": "{} 已完成研判（非交易日或今日已运行）。如需重跑：python app.py run-daily --force".format(D)}
+                    "view": None, "score": None, "source": None,
+                    "message": "{} 已完成研判{}。如需重跑：python app.py run-daily --force".format(
+                        D, "（" + extra + "）" if extra else
+                        "（非交易日或今日已运行）"),
+                    "messages": msgs_all}
         # 1) force 重跑：撤销当日 pending
         if force:
             for o in [x for x in self.ledger.pending_orders() if x["order_date"] == D]:
@@ -800,7 +1106,10 @@ class Engine:
             try:
                 scr = self._screen()
                 scr.ingest_feed(D, news_obj.get("feed") or [])
-                human = scr.human_news_meta(D, amplitude=news_amp)
+                human = scr.human_news_meta(
+                    D, amplitude=news_amp,
+                    mode=str(st_cfg.get("news_net_mode") or "scaled"),
+                    scale=float(st_cfg.get("human_net_scale") or 10.0))
             except Exception as e:
                 human = None
                 msgs_all.append("消息人工筛选库异常：{}".format(e))
@@ -811,15 +1120,123 @@ class Engine:
                 news_sc = news_obj.get("score")
         else:
             news_sc = None
-        score = combine_score(self.cfg, tech, news_sc)
-        if news_sc is not None:
-            source = "量化+消息面"
-            msgs_all.append("评分合成：量化 {:+.0f} ×{}% + 消息面[{}] {:+.0f} ×{}% = {:+.0f}".format(
-                tech, int((1 - float(st_cfg.get("news_weight", 0.35))) * 100),
-                news_from, news_sc, int(float(st_cfg.get("news_weight", 0.35)) * 100),
-                score))
+        # 情绪微观结构（借鉴 Cailianpress-Feishu-Bot 复盘算法：涨停池/炸板率/
+        # 昨日晋级率/涨跌停结构；失败自动降级，绝不阻断主流程）
+        wm = float(st_cfg.get("micro_weight", 0.15) or 0)
+        micro_sc, micro_snap = None, None
+        if wm > 0 and st_cfg.get("micro_enable", True):
+            mp = microstructure.load_pulse(D, cfg=self.cfg)
+            if mp.get("ok"):
+                micro_sc = mp.get("score")
+                micro_snap = mp.get("snap")
+                if mp.get("stale"):
+                    msgs_all.append("情绪微观结构：在线抓取失败，本次使用当日已缓存快照。")
+                for e in (mp.get("errors") or [])[:2]:
+                    msgs_all.append("情绪微观结构（部分源）：" + e)
+            else:
+                msgs_all.append("情绪微观结构不可用（本次跳过该维度）："
+                                "{}".format(mp.get("message")))
+        # 动态权重：按消息净情绪 / 情绪分位 / 波动分位小幅倾斜（有界，见 analysis.dynamic_weights）
+        micro_ctx_early = {}
+        try:
+            micro_ctx_early = microstructure.sentiment_context(D, cfg=self.cfg)
+        except Exception:
+            micro_ctx_early = {}
+        try:
+            vr_now = indicators.vol_rank([x for x in closes])
+        except Exception:
+            vr_now = None
+        w_news_eff, w_micro_eff, w_note = analysis.dynamic_weights(
+            self.cfg,
+            news_net=(news_obj.get("net") if news_obj.get("ok") else None),
+            micro_pct=micro_ctx_early.get("pct_rank"), vol_rank=vr_now)
+        score = combine_score(self.cfg, tech, news_sc, micro_sc,
+                              w_news=w_news_eff, w_micro=w_micro_eff)
+        if st_cfg.get("dynamic_weights", True):
+            msgs_all.append("动态权重：量化 {:.0%} / 消息 {:.0%} / 情绪 {:.0%}（{}）".format(
+                max(0.0, 1.0 - w_news_eff - (w_micro_eff if micro_sc is not None else 0.0)),
+                w_news_eff, (w_micro_eff if micro_sc is not None else 0.0),
+                w_note))
+        # —— 合成口径明细（与 combine_score 完全一致：有效权重 + 限幅后分数）——
+        cap_n = float(st_cfg.get("news_score_cap", 25) or 0)
+        cap_m = float(st_cfg.get("micro_score_cap", 30) or 0)
+        w_n = float(st_cfg.get("news_weight", 0.35) or 0)
+        w_m = util.clamp(float(st_cfg.get("micro_weight", 0.15) or 0), 0.0, 0.30)
+        n_eff = None if news_sc is None else (
+            util.clamp(float(news_sc), -cap_n, cap_n) if cap_n > 0
+            else float(news_sc))
+        m_eff = None if micro_sc is None else (
+            util.clamp(float(micro_sc), -cap_m, cap_m) if cap_m > 0
+            else float(micro_sc))
+        w_n_eff = w_n if n_eff is not None else 0.0
+        w_m_eff = w_m if m_eff is not None else 0.0
+        w_q_eff = 1.0 - w_n_eff - w_m_eff
+        segs = ["量化 {:+.0f}×{:.0f}%".format(tech, w_q_eff * 100)]
+        if n_eff is not None:
+            segs.append("消息面[{}] {:+.0f}{}×{:.0f}%".format(
+                news_from, n_eff,
+                "（原始{:+.0f}→限幅±{:.0f}）".format(news_sc, cap_n)
+                if cap_n > 0 and abs(float(news_sc)) > cap_n else "",
+                w_n_eff * 100))
+        if m_eff is not None:
+            segs.append("情绪微观 {:+.0f}{}×{:.0f}%".format(
+                m_eff,
+                "（原始{:+.0f}→限幅±{:.0f}）".format(micro_sc, cap_m)
+                if cap_m > 0 and abs(float(micro_sc)) > cap_m else "",
+                w_m_eff * 100))
+        if news_sc is None and micro_sc is None:
+            source = "纯量化（消息面缺失）"
+        elif news_sc is not None:
+            source = "量化+消息面" + ("+情绪微观" if micro_sc is not None else "")
         else:
+            source = "量化+情绪微观"
+        msgs_all.append("评分合成：" + " + ".join(segs) + " = {:+.0f}".format(score))
+        if news_sc is None:
             msgs_all.append("消息面获取失败或为空，本次按纯量化评分运行")
+        micro_lines = microstructure.review_lines({"snap": micro_snap}) \
+            if micro_snap else []
+        # 近 N 日情绪上下文（缓存保留天数远多于画图的 7 天）：分位/趋势/冷热天数
+        micro_ctx = {}
+        try:
+            micro_ctx = microstructure.sentiment_context(D, cfg=self.cfg)
+        except Exception:
+            micro_ctx = {}
+        if micro_ctx.get("days"):
+            micro_lines.append(
+                "【情绪位置】近 {} 个交易日：当前 {} 分位 {:.0%}（{}），均值 {:.0f}、"
+                "区间 {}~{}，5 日趋势 {}，其中偏热(≥40) {} 天、偏冷(≤−40) {} 天。".format(
+                    micro_ctx.get("days"), micro_ctx.get("latest"),
+                    micro_ctx.get("pct_rank") or 0, micro_ctx.get("label") or "中性",
+                    micro_ctx.get("mean") or 0, micro_ctx.get("min") or 0,
+                    micro_ctx.get("max") or 0,
+                    ("{:+.0f}".format(micro_ctx["trend"])
+                     if micro_ctx.get("trend") is not None else "—"),
+                    micro_ctx.get("hot_days") or 0, micro_ctx.get("cold_days") or 0))
+        # 题材热度（近3交易日涨停概念+风口，按当日占比衰减→持续性加成）→ 选基热度因子
+        heat_rep = {}
+        try:
+            hist_snaps = microstructure.history_pulses(D, days=3, cfg=self.cfg)
+            heat_rep = microstructure.theme_heat_report(hist_snaps)
+            ctx_theme_heat = heat_rep.get("map") or {}
+        except Exception:
+            ctx_theme_heat = {}
+        theme_lines = []
+        if heat_rep.get("rows"):
+            dts = "/".join(str(d)[5:] for d in (heat_rep.get("days") or []))
+            theme_lines.append("题材热度（涨停口径 {}，衰减权重 {}）：{}".format(
+                dts, "/".join(str(x) for x in (heat_rep.get("decay") or [])),
+                "、".join("{}{} {:.2f}".format("🔥" if r.get("ignition") else "",
+                                               r["theme"], r["heat"])
+                          for r in heat_rep["rows"][:3])))
+            if heat_rep.get("market_heat") is not None:
+                arrow = {"up": "↑", "down": "↓", "flat": "→"}.get(
+                    heat_rep.get("trend") or "", "")
+                theme_lines.append("市场涨停 {} 家{}，整体热度指数 {:.2f}".format(
+                    heat_rep.get("zt_latest"), arrow, heat_rep["market_heat"]))
+            if heat_rep.get("ignitions"):
+                theme_lines.append("🔥 今日点火（新热点）：" +
+                                   "、".join(heat_rep["ignitions"]))
+            msgs_all.extend(theme_lines)
         news_block = self._news_lines(news_obj, news_from)
         factors = self._fund_factors(D)
         mom_map = {c: f["mom"] for c, f in factors.items()}
@@ -827,20 +1244,23 @@ class Engine:
         ctx["funds_vol"] = {c: f["vol"] for c, f in factors.items()}
         ctx["funds_mom5"] = {c: f["mom5"] for c, f in factors.items()}
         ctx["funds_factors"] = factors
+        ctx["theme_heat"] = ctx_theme_heat
         raw_score = score
+        ema_prev = (self.ledger.score_ema()
+                    if st_cfg.get("score_ema_enabled", False) else None)
         smooth = self._smooth_score(self.ledger, raw_score)
         ctx["score"] = smooth
         ctx["raw_score"] = raw_score
         # AI 自动记录“次日方向”并用于自检命中率（用户不参与预测，只做消息打标过滤）
+        ai_dir, ai_conf = self.ai_direction(smooth)
         try:
-            view = analysis.view_of(smooth)["key"]
-            ai_dir = ("bull" if view in ("hot_bull", "bull")
-                      else "bear" if view in ("hot_bear", "bear") else "neutral")
-            ai_conf = (0.5 if ai_dir == "neutral" else
-                       float(util.clamp(abs(smooth) / 100.0, 0.0, 1.0) * 0.5 + 0.5))
             self._screen().set_direction(D, ai_dir, ai_conf)
-        except Exception:
-            pass
+        except Exception as e:
+            # 不再静默吞掉：方向没记上必须在日志里看得见（此前 except: pass 让
+            # “今天没记录方向”完全无痕迹，是最难查的一类故障）
+            msgs_all.append("AI 次日方向记录失败（不影响主流程，可用 "
+                            "python app.py direction-check --date {} 重试）：{}".format(
+                                D, e))
         ctx["defensive"] = self._defensive(self.ledger, D, smooth)
         ctx["market_mom"] = st.get("mom20")  # 大盘(沪深300)20日动量，用于板块相对强弱
         # 多信号共识度（借鉴 ai-hedge-fund 多观点投票）：技术信号内部一致性，
@@ -851,16 +1271,76 @@ class Engine:
         bull_n = sum(1 for s in sigs if s.get("impact", 0) > 0)
         bear_n = sum(1 for s in sigs if s.get("impact", 0) < 0)
         news_dir = "利多" if (news_sc or 0) > 0 else ("利空" if (news_sc or 0) < 0 else "中性")
-        msgs_all.append("多信号共识度 {:.0%}：技术面 {}/{} 票看多、{}/{} 票看空，消息面{}（{:+d}）。"
+        micro_txt = ("，情绪微观（{:+d}）".format(micro_sc)
+                     if micro_sc is not None else "")
+        msgs_all.append("多信号共识度 {:.0%}：技术面 {}/{} 票看多、{}/{} 票看空，消息面{}（{:+d}）{}。"
                         "共识越高越顺势，分歧大则少追涨杀跌。".format(
                             ctx["confidence"], bull_n, len(sigs), bear_n, len(sigs),
-                            news_dir, news_sc or 0))
+                            news_dir, news_sc or 0, micro_txt))
         if smooth != raw_score:
             msgs_all.append("评分平滑：原始 {:+.0f} → 平滑 {:+.0f}（仅用于仓位控制，降低换手）".format(
                 raw_score, smooth))
+        # 风险过滤器（事件+行情模型 → 仓位上限乘数，只降不升；失败绝不阻断主流程）
+        overlay = {"action": "none", "scale": 1.0, "reason": "未启用"}
+        if st_cfg.get("risk_overlay_enable", True):
+            try:
+                overlay = risk_overlay.latest(self.cfg)
+                # 限频：两次叠加驱动型调仓之间至少隔 risk_overlay_min_hold 个交易日
+                # （场外基金 T+1 + 赎回费，频繁切换会被成本吃光，见 README「一、项目目标与硬约束」）
+                min_hold = int(st_cfg.get("risk_overlay_min_hold", 10) or 0)
+                last_scale = self.ledger.meta("overlay_scale")
+                last_date = self.ledger.meta("overlay_date")
+                if min_hold > 0 and last_scale not in (None, "") and last_date:
+                    try:
+                        gap = util.trading_days_between(str(last_date), D)
+                        gap = len(gap) if isinstance(gap, (list, tuple)) else gap
+                    except Exception:
+                        gap = min_hold + 1
+                    if gap < min_hold and abs(float(last_scale) -
+                                              float(overlay.get("scale", 1.0))) > 1e-9:
+                        overlay = dict(overlay)
+                        overlay["scale"] = float(last_scale)
+                        overlay["held"] = "距上次调整 {} 个交易日 < {}，维持原仓位乘数".format(
+                            gap, min_hold)
+                self.ledger.set_meta("overlay_scale", str(overlay.get("scale", 1.0)))
+                self.ledger.set_meta("overlay_date", D)
+                if overlay.get("action") in ("risk_off", "neutral"):
+                    msgs_all.append("风险过滤：{}（目标仓位 {:+.0%}{}）".format(
+                        overlay.get("reason") or "",
+                        float(overlay.get("scale", 1.0)) - 1.0,
+                        "，" + overlay["held"] if overlay.get("held") else ""))
+                else:
+                    msgs_all.append("风险过滤：{}".format(
+                        overlay.get("reason") or "不干预仓位"))
+            except Exception as exc:
+                overlay = {"action": "none", "scale": 1.0,
+                           "reason": "模型不可用（{}）".format(str(exc)[:60])}
+                msgs_all.append("风险过滤：模型不可用，本次不干预仓位")
+        ctx["risk_overlay"] = overlay
+        # 动态调整带的输入：制度（均线多头/波动分位）+ 情绪位置（分位）
+        try:
+            ctx["vol_rank"] = vr_now
+        except NameError:
+            ctx["vol_rank"] = None
+        try:
+            ctx["ma_align"] = indicators.ma_align_state([x for x in closes])
+        except Exception:
+            ctx["ma_align"] = None
+        ctx["micro_pct"] = (micro_ctx_early or {}).get("pct_rank")
+        # 账户收益（脱离规则权重的依据）与动态权重口径，传给策略层
+        try:
+            _init = float(self.ledger.account_meta().get("initial_cash") or 0) or 0.0
+            ctx["account_gain_pct"] = ((val["total"] / _init - 1.0)
+                                       if _init > 0 else 0.0)
+        except Exception:
+            ctx["account_gain_pct"] = 0.0
+        ctx["weights_eff"] = {"news": w_news_eff, "micro": (w_micro_eff
+                                                            if micro_sc is not None else 0.0),
+                              "note": w_note}
         plan = strategy.plan(self.cfg, ctx)
         self._update_risk_lock(plan, D, smooth)
-        extra = news_block + self._sector_brief(D) + self._plan_lines(plan, exec_mode, D)
+        extra = news_block + micro_lines + theme_lines + self._sector_brief(D) + \
+            self._plan_lines(plan, exec_mode, D)
         report = analysis.build_report(D, self._idx_name(), close, chg, st,
                                        score, sigs, source,
                                        extra_lines=extra)
@@ -868,11 +1348,36 @@ class Engine:
         llm = self.cfg.get("llm") or {}
         title = analysis.view_of(score)["title"]
         if llm.get("enabled") and llm.get("api_key"):
+            _plan = settings.account_plan(self.cfg)   # (本金, 目标, 倍数)
             pack = {
                 "日期": D, "指数": self._idx_name(),
                 "收盘点位": close,
                 "当日涨跌%": (None if chg is None else round(chg * 100, 2)),
                 "量化评分": tech, "消息面分": news_sc,
+                "情绪微观分": micro_sc,
+                "题材热度": {
+                    "口径": "近3交易日涨停概念+0.5×最强风口，按当日占比衰减+持续性加成",
+                    "数据日": heat_rep.get("days"),
+                    "衰减权重": heat_rep.get("decay"),
+                    "主题热度": dict(list((heat_rep.get("map") or {}).items())[:8]),
+                    "今日点火新热点": heat_rep.get("ignitions"),
+                    "市场涨停家数": heat_rep.get("zt_latest"),
+                },
+                "风险过滤信号": {
+                    "P(次日上涨)": overlay.get("p_up"),
+                    "动作": overlay.get("action"),
+                    "仓位乘数": overlay.get("scale"),
+                    "说明": overlay.get("reason"),
+                },
+                "微观情绪定性": ((micro_snap or {}).get("qualitative") or {}).get("mood")
+                if micro_snap else None,
+                "情绪位置（近30日）": {
+                    "分位": micro_ctx.get("pct_rank"), "标签": micro_ctx.get("label"),
+                    "均值": micro_ctx.get("mean"), "趋势": micro_ctx.get("trend"),
+                    "偏热天数": micro_ctx.get("hot_days"),
+                    "偏冷天数": micro_ctx.get("cold_days"),
+                    "窗口": micro_ctx.get("days"),
+                },
                 "合成评分": score,
                 "技术指标": {k: (round(v, 3) if isinstance(v, float) else v)
                            for k, v in st.items() if k not in ("date", "n")},
@@ -888,24 +1393,107 @@ class Engine:
                           "20日动量": (round(w.get("mom") * 100, 2) if w.get("mom") is not None else None)}
                          for w in plan.get("winners", [])],
                 "风控建议": plan["msgs"],
-                "实验目标": "1000元 半年内挑战 1500 元（只能买卖场外基金，不能直接买股票）",
+                "账户计划": "起始资金 {:.0f} 元 · 目标线 {:.0f} 元（+{:.0f}%；"
+                            "只能买卖场外基金，不能直接买股票）".format(
+                                _plan[0], _plan[1], (_plan[2] - 1) * 100),
             }
             r = analysis.llm_analyze(self.cfg, pack)
             if r:
                 score = r["score"]
                 source = "LLM·" + r.get("provider", "ai")
                 title = r["title"]
-                report = r["text"]
+                # 引擎数据附录：LLM 只负责观点文案，客观口径（评分合成/微观情绪/题材热度）
+                # 始终由引擎附在末尾，避免“AI 的结论”盖掉“数据怎么算的”
+                appendix = [m for m in msgs_all
+                            if m.startswith(("评分合成：", "题材热度（", "市场涨停",
+                                             "🔥 今日点火"))] + micro_lines
+                report = r["text"].rstrip()
+                if appendix:
+                    report += "\n\n—— 附：引擎数据（客观口径，供核对）——\n" + \
+                        "\n".join("· " + m for m in appendix)
                 msgs_all.append("【LLM研判已启用】观点由 {} 生成".format(source))
                 if abs(score - plan["score"]) > 15:
                     msgs_all.append("提示：LLM 观点（{:+d}）与合成评分（{:+d}）分歧较大，"
                                     "仓位按规则引擎执行以保持纪律".format(score, plan["score"]))
         # 4) 下达今日建议（去重）
         created = self._place_orders(D, plan)
-        # 5) 记录
+        # 5) 记录（含评分计算明细 calc，供界面拆解“这个分怎么来的”）
         decision = self._decision_text(plan, fills, exec_mode, D)
+        calc = {"v": 1, "parts": [], "raw": raw_score, "smoothed": smooth,
+                "final_recorded": int(score)}
+        calc["parts"].append({
+            "key": "quant", "label": "量化技术面", "score": int(round(tech)),
+            "weight": round(w_q_eff, 4), "contrib": round(tech * w_q_eff, 2),
+            "detail": {"factors": [{"name": f.get("name"), "impact": f.get("impact"),
+                                    "note": f.get("note")} for f in sigs]}})
+        if n_eff is not None:
+            nd = {"mode": news_from, "amplitude": news_amp,
+                  "scope": news_obj.get("scope") or {}}
+            try:
+                nd.update(self._screen().news_breakdown(
+                    D, human_mode=(human is not None),
+                    mode=str(st_cfg.get("news_net_mode") or "scaled"),
+                    scale=float(st_cfg.get("human_net_scale", 10.0)
+                                if human is not None
+                                else st_cfg.get("news_net_scale", 240.0))))
+            except Exception:
+                pass
+            p = {"key": "news", "label": "消息面", "score": int(round(float(news_sc))),
+                 "weight": round(w_n_eff, 4), "contrib": round(n_eff * w_n_eff, 2),
+                 "detail": nd}
+            if cap_n > 0 and abs(float(news_sc)) > cap_n:
+                p["capped"] = int(round(n_eff))
+            calc["parts"].append(p)
+        if m_eff is not None:
+            try:
+                _, m_parts, m_flags = microstructure.sentiment_score(micro_snap)
+            except Exception:
+                m_parts, m_flags = {}, []
+            SUB = {"breadth": ("涨跌广度", 40, "(涨跌比−50%)×200"),
+                   "struct": ("涨停/跌停结构", 25, "(涨停数−跌停数)/60×100"),
+                   "promotion": ("昨日涨停晋级率", 20, "(晋级率−30%)/30%×100"),
+                   "zb": ("炸板惩罚", 15, "(35%−炸板率)/35%×100")}
+            subs = [{"name": SUB[k][0], "weight": SUB[k][1], "formula": SUB[k][2],
+                     "score": m_parts.get(k)}
+                    for k in ("breadth", "struct", "promotion", "zb") if k in m_parts]
+            ms = micro_snap or {}
+            p = {"key": "micro", "label": "情绪微观",
+                 "score": int(round(float(micro_sc))), "weight": round(w_m_eff, 4),
+                 "contrib": round(m_eff * w_m_eff, 2),
+                 "detail": {"subs": subs, "flags": m_flags,
+                            "data": {k: ms.get(k) for k in
+                                     ("rise", "fall", "deuce", "zt", "zb", "dt",
+                                      "rise_ratio", "promotion_rate", "zb_rate",
+                                      "prev_date")}}}
+            if cap_m > 0 and abs(float(micro_sc)) > cap_m:
+                p["capped"] = int(round(m_eff))
+            calc["parts"].append(p)
+        ema_on = bool(st_cfg.get("score_ema_enabled", False))
+        calc["smooth"] = {"enabled": ema_on,
+                          "alpha": (float(st_cfg.get("score_ema_alpha", 0.4) or 0.4)
+                                    if ema_on else None),
+                          "prev": ema_prev, "raw": raw_score, "value": smooth}
+        calc["overlay"] = {
+            "p_up": overlay.get("p_up"), "action": overlay.get("action"),
+            "scale": overlay.get("scale"), "reason": overlay.get("reason"),
+            "w_target": plan.get("w_target"),
+            "note": "风险过滤器只下调权益目标仓位、从不上调；P(涨) 低于阈值时按 "
+                    "scale 缩仓（模型口径见 README「5.5 事件→方向模型」）"}
+        if str(source).startswith("LLM"):
+            calc["llm"] = {"provider": source, "score": int(score),
+                           "rule_score": smooth,
+                           "note": "记录/观点显示 LLM 分；分仓执行仍按规则合成 {:+d}"
+                                   "（LLM 只影响文案与展示，不越权改仓位）".format(smooth)}
+        # 把“当日 AI 次日方向”的口径一并存档：晚间补跑/手动重跑 direction-check 时
+        # 直接复用这条记录（不重算），保证同一交易日的判断与自检可复现、逐位一致。
+        if ai_dir:
+            calc["direction"] = {"dir": ai_dir, "confidence": round(float(ai_conf), 4),
+                                 "score": int(round(smooth)),
+                                 "note": "次日方向由平滑后合成评分推导（看多≥+25 / "
+                                         "看空≤−25 / 其余中性），下一交易日收盘后结算命中"}
         self.ledger.add_record(D, score, chg, close, title, source,
-                               report, decision)
+                               report, decision,
+                               calc=json.dumps(calc, ensure_ascii=False))
         # 6) 快照
         held = self.ledger.positions()
         fresh = True
@@ -922,6 +1510,15 @@ class Engine:
             snap_written = True
         elif not self.ledger.has_snapshot(D):
             msgs_all.append("部分基金今日净值未公布，待齐备后再次运行生成快照")
+        # 6.5) 资产曲线自愈：补记此前因“当晚没跑/净值未出齐”缺失的近日快照
+        if not self.demo:
+            try:
+                bf = self.backfill_snapshots(
+                    days=int(st_cfg.get("snap_backfill_days", 7)))
+                if bf:
+                    msgs_all.append("资产曲线自愈：补记历史快照 {} 个交易日".format(bf))
+            except Exception as e:
+                msgs_all.append("历史快照回填跳过：{}".format(e))
         # 7) 进化闭环：人工筛选入库→方向结算→信息缺口队列→本地搜索回填
         self._news_evolve(D, news_obj, chg, msgs_all)
         # 8) 盘后策略时机与数据完整性提示（场外基金按收盘净值成交，信号依赖收盘数据）
@@ -964,16 +1561,20 @@ class Engine:
             return []
         bull = news_obj.get("bull", []) or []
         bear = news_obj.get("bear", []) or []
-        lines = ["【消息面】当日快讯情绪：利好 {} 条 / 利空 {} 条，净情绪 {}（消息分 {:+.0f}；来源：{}）。".format(
-            len(bull), len(bear), news_obj.get("net", 0), news_obj.get("score", 0),
-            news_from)]
+        imp = sum(1 for e in (news_obj.get("feed") or []) if e.get("important"))
+        lines = ["【消息面】当日快讯情绪：利好 {} 条 / 利空 {} 条（🔴重要 {} 条），"
+                 "净情绪 {}（消息分 {:+.0f}；来源：{}；财联社+东财+新浪多源）。".format(
+                     len(bull), len(bear), imp, news_obj.get("net", 0),
+                     news_obj.get("score", 0), news_from)]
         if bull:
             lines.append("利好：①" + " ②".join(
-                "{}（{}）".format(n["title"][:44], n.get("time", "")[-5:])
+                "{}{}（{}）".format("🔴" if n.get("important") else "",
+                                  n["title"][:44], n.get("time", "")[-5:])
                 for n in bull[:3]))
         if bear:
             lines.append("利空：①" + " ②".join(
-                "{}（{}）".format(n["title"][:44], n.get("time", "")[-5:])
+                "{}{}（{}）".format("🔴" if n.get("important") else "",
+                                  n["title"][:44], n.get("time", "")[-5:])
                 for n in bear[:3]))
         return lines
 
@@ -1001,6 +1602,16 @@ class Engine:
                 parts.append("{}（{}）".format(w.get("name") or self._name_of(w.get("code")), mom_txt))
             lines.append("AI 综合进攻组合（{} 只不同板块）：{}；权益目标仓位 {:.0%}（当前 {:.0%}）。".format(
                 len(winners), "、".join(parts), plan.get("w_target", 0), plan.get("w_now", 0)))
+        pf = plan.get("portfolio") or {}
+        if pf.get("ok") and pf.get("weights"):
+            parts = []
+            for c, w in sorted(pf["weights"].items(), key=lambda x: -x[1]):
+                parts.append("{} {:.0%}".format(self._name_of(c), w))
+            vol = pf.get("ex_ante_vol")
+            lines.append("综合最优组合（{}）：{}；集中度 HHI {:.2f}{}。".format(
+                pf.get("method") or "组合", "、".join(parts),
+                pf.get("hhi") or 0.0,
+                ("；事前年化波动 {:.0%}".format(vol) if vol else "")))
         n = 0
         conv_note = any("基金转换" in (o.get("note") or "") for o in plan.get("orders") or [])
         if conv_note:
@@ -1143,17 +1754,23 @@ class Engine:
         return items
 
     def simulate(self, ledger, dates, index_close, index_vol, nav_series,
-                 warmup_n=0):
+                 warmup_n=0, news_map=None, micro_map=None):
         """在给定交易日序列上回放同一引擎（回测/演示共用）。
 
         - 候选池按“当日及之前可见净值”的 20 日动量**逐日重建**（point-in-time），
           不再用“今天挑好的池”回放历史，消除前视/幸存者偏差（audit P0-3）；
         - warmup_n>0 时，前 warmup_n 个交易日只“预热”指标/动量，不进入统计行
-          （其产生的持仓作为后续统计的起始状态）。
+          （其产生的持仓作为后续统计的起始状态）；
+        - news_map / micro_map：{日期: 消息分 / 情绪分}。给了就用**当日**的分
+          （缺失日期按 0 处理，绝不前视填补），从而让消息面/情绪子系统也进入回测；
+          都不给时退化为纯量化口径（与历史行为一致）。
         返回 rows 列表（每个元素是一个“统计日”快照）。
         """
         res = []
         closes = index_close
+        self._unfilled_days = {}
+        self._replay_expired = []
+        st_cfg = self.cfg.get("strategy", {}) or {}
         univ_codes = sorted((nav_series or {}).keys())
         meta = self._replay_meta(univ_codes)
         eq_all = [c for c in univ_codes if meta.get(c, {}).get("kind") != "bond"]
@@ -1172,13 +1789,29 @@ class Engine:
             saved_override = self._pool_override
             self._pool_override = pool
             try:
-                # 1) 成交历史挂单
+                # 1) 成交历史挂单；**无法成交的挂单必须作废**（否则永久占用现金）
+                #    修 BUG（2026-09-11）：回放里如果某只基金在当日没有净值（数据缺口、
+                #    基金当时还没成立、停牌/暂停申赎），旧代码只跳过成交、不释放挂单，
+                #    于是 `committed` 被永久占住、`avail_cash` 恒为 0，引擎再也不能加仓。
+                #    实测该缺陷让 2019-2021 牛市区间只赚 1.4%（指数 +40%）。
                 for o in list(ledger.pending_orders()):
                     if o["order_date"] >= d:
                         continue
                     nav = (nav_series.get(o["fund_code"]) or {}).get(d)
                     if nav:
                         self._fill_order(o, d, nav, ledger=ledger)
+                        continue
+                    oid = o.get("id")
+                    self._unfilled_days[oid] = self._unfilled_days.get(oid, 0) + 1
+                    if self._unfilled_days[oid] >= self.ORDER_EXPIRE_DAYS:
+                        ledger.skip_order(oid, "回放：连续 {} 个交易日无可用净值，"
+                                               "挂单作废（释放资金占用）".format(
+                                                   self._unfilled_days[oid]))
+                        self._unfilled_days.pop(oid, None)
+                        msgs_note = ("{} 挂单作废：{} 个交易日无净值".format(
+                            o["fund_code"], self.ORDER_EXPIRE_DAYS))
+                        if msgs_note not in self._replay_expired:
+                            self._replay_expired.append(msgs_note)
                 # 2) 估值与指标（覆盖“当日池 + 全部持仓”，避免轮动出池的持仓被漏估）
                 nav_map = {}
                 val_codes = set(self._pool_codes()) | set(ledger.positions())
@@ -1189,10 +1822,31 @@ class Engine:
                 st = indicators.last_stats(dates[:i + 1], closes[:i + 1],
                                            index_vol[:i + 1])
                 val = self._valuation(nav_map, ledger=ledger)
-                score, sigs = analysis.score_market(st)
+                tech_score, sigs = analysis.score_market(st)
                 close = st.get("close")
                 chg = st.get("chg_pct")
-                # 3) 决策（回放：无当日消息面，按纯量化评分运行止损止盈等规则）
+                # 3) 决策：量化分 + 当日消息分 + 当日情绪分（同日同口径，缺失按 0）
+                #    news_map/micro_map 为 None 时退化为纯量化（历史行为不变）
+                news_sc, micro_sc = None, None
+                if news_map is not None or micro_map is not None:
+                    rec = (news_map or {}).get(d) or {}
+                    news_sc = rec.get("score")
+                    micro_sc = (micro_map or {}).get(d)
+                    try:
+                        vr_now = indicators.vol_rank([x for x in closes[:i + 1]])
+                    except Exception:
+                        vr_now = None
+                    try:
+                        w_news_eff, w_micro_eff, _wn = analysis.dynamic_weights(
+                            self.cfg, news_net=(rec.get("net") if rec else None),
+                            micro_pct=None, vol_rank=vr_now)
+                    except Exception:
+                        w_news_eff = float(st_cfg.get("news_weight", 0.2) or 0)
+                        w_micro_eff = float(st_cfg.get("micro_weight", 0.1) or 0)
+                    score = combine_score(self.cfg, tech_score, news_sc, micro_sc,
+                                          w_news=w_news_eff, w_micro=w_micro_eff)
+                else:
+                    score = tech_score
                 factors = {}
                 mom_map = {}
                 for c in self._eq_codes():
@@ -1205,9 +1859,25 @@ class Engine:
                         mom5 = (w[-1] / w[-6] - 1.0) if len(w) >= 6 and w[-6] else None
                         ma20 = sum(w[-20:]) / 20.0
                         bias = w[-1] / ma20 - 1.0 if ma20 else 0.0
+                        rets60 = rets
+                        if len(w) >= 61 and all(w[i] for i in range(-61, 0)):
+                            rets60 = [w[i] / w[i - 1] - 1.0
+                                      for i in range(-60, 0)]
                         factors[c] = {"mom": mom_map[c], "mom5": mom5, "vol": vol,
-                                      "bias": bias, "rsi": indicators.rsi(w, 14)}
+                                      "bias": bias, "rsi": indicators.rsi(w, 14),
+                                      "rets": rets60}
                 ctx = self._ctx(d, val, nav_map, ledger=ledger, mom_map=mom_map)
+                # 制度/波动状态：线上 run_daily 会注入 ma_align/vol_rank，
+                # 回放必须同口径注入，否则 adaptive 组合/调整带在回放里永远看不到制度。
+                try:
+                    ctx["ma_align"] = indicators.ma_align_state(closes[:i + 1])
+                except Exception:
+                    ctx["ma_align"] = None
+                try:
+                    ctx["vol_rank"] = indicators.vol_rank(closes[:i + 1])
+                except Exception:
+                    ctx["vol_rank"] = None
+                ctx["micro_pct"] = None
                 ctx["names"].update({c: meta.get(c, {}).get("name", c)
                                      for c in ledger.positions() if c in meta})
                 ctx["funds_vol"] = {c: f["vol"] for c, f in factors.items()}
@@ -1218,6 +1888,11 @@ class Engine:
                 ctx["score"] = smooth
                 ctx["raw_score"] = raw_score
                 ctx["defensive"] = self._defensive(ledger, d, smooth)
+                # 组合级风控的"迟滞"状态：未武装时不允许再次触发（见 _update_risk_lock）
+                try:
+                    ctx["risk_armed"] = (ledger.meta("risk_armed") != "0")
+                except Exception:
+                    ctx["risk_armed"] = True
                 ctx["market_mom"] = st.get("mom20")  # 大盘20日动量，用于板块相对强弱
                 ctx["confidence"] = analysis.signal_confidence(sigs)  # 回放无消息面
                 plan = strategy.plan(self.cfg, ctx)
@@ -1256,20 +1931,72 @@ class Engine:
             out[code] = d_map
         return out
 
+    def _replay_news_map(self, dates, cfg=None):
+        """回放用「当日消息分」表（十年消息库按日聚合，与线上同日同口径）。
+
+        为什么需要：`simulate` 旧注释写着"回放无当日消息面"，于是回测/组合试错
+        实际上只验证了纯量化分 + 风控规则，**消息面与情绪两个子系统从未被回测覆盖**。
+        十年消息库（`cls_history.db`，2016-08 起）已就绪，可以按日还原线上口径的
+        净情绪与消息分（`news.daily_score_map`，带磁盘缓存）。
+        开关：`strategy.replay_news`（默认 true），关闭则回退纯量化口径。
+        """
+        st = (cfg or self.cfg).get("strategy") or {}
+        if not st.get("replay_news", True):
+            return None
+        try:
+            from . import news as newsmod
+            m = newsmod.daily_score_map(cfg or self.cfg)
+        except Exception as e:
+            self.market.warnings.append("回放消息面不可用（回退纯量化）：{}".format(
+                str(e)[:120]))
+            return None
+        if not dates:
+            return None
+        lo, hi = dates[0], dates[-1]
+        return {d: v for d, v in (m or {}).items() if lo <= d <= hi}
+
+    def _replay_micro_map(self, dates, cfg=None):
+        """回放用情绪分：只取**当日已存在**的涨停快照（无缓存则 None，绝不前视填补）。
+
+        同花顺涨停池快照只回补了 2025 年之后的 260 多个交易日，因此历史区间的
+        情绪维度天然缺失——这是数据边界，报告里必须写明，不能用最新快照冒充。
+        """
+        st = (cfg or self.cfg).get("strategy") or {}
+        if not st.get("micro_enable", True) or float(st.get("micro_weight") or 0) <= 0:
+            return None
+        try:
+            from . import microstructure as ms
+        except Exception:
+            return None
+        out = {}
+        for d in dates or []:
+            try:
+                snap = ms.load_snap(d)
+            except Exception:
+                snap = None
+            if snap and snap.get("score") is not None:
+                out[d] = int(snap.get("score"))
+        return out or None
+
     def backtest(self, months=6, source="auto", end_date=None):
-        """回测最近 months 个月（source: auto/live/demo）。
+        """回测最近 months 个月（source: auto/live/demo；end_date 可指定历史区间末）。
 
         修复口径（audit P0-3）：
         - 回放池按“当日及之前”的动量逐日重建（point-in-time），不再用今天挑好的池回放历史；
         - 前 warmup_n(默认60) 个交易日只用于预热指标/池选择，不计入收益统计；
         - 输出增加同期沪深300 基准 buy&hold（bench_ret_pct）与说明字段。
+        2026-09 起：回放**接入十年消息库的当日消息分与已缓存情绪分**
+        （`strategy.replay_news`，缺缓存时该维度自动为 0），此前回放只跑纯量化分。
         """
         demo_flag, dates, closes, vols, hist, warmup_n, skipped = \
             self._prep_replay(months, source, end_date, warmup_n=60)
         nav_series = self._ffill_navs(dates, hist)
+        news_map = None if demo_flag else self._replay_news_map(dates)
+        micro_map = None if demo_flag else self._replay_micro_map(dates)
         sub = Ledger(":memory:",
                      initial_cash=float(self.acct.get("initial_cash", 500)))
-        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n)
+        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n,
+                             news_map=news_map, micro_map=micro_map)
         # 账本一致性断言：资金守恒偏差超限直接失败（audit P0-4）
         chk = sub.check_consistency(raise_on_mismatch=True, tol=0.02)
         totals = [r["total"] for r in rows]
@@ -1295,7 +2022,7 @@ class Engine:
             "days": len(rows),
             "warmup_days": warmup_n,
             "consistency": chk,
-            "initial": float(self.acct.get("initial_cash", 500)),
+            "initial": settings.account_plan(self.cfg)[0],
             "end_value": round(end_v, 2),
             "ret_pct": (end_v / start_v - 1) if start_v else 0,
             "bench_ret_pct": (round(bench_ret, 6) if bench_ret is not None else None),
@@ -1303,10 +2030,15 @@ class Engine:
             "trades": len(trades),
             "fees": sub.fees(),
             "skipped_codes": len(skipped),
-            "target": float(self.acct.get("target_value", 800)),
-            "goal_hit": bool(end_v >= float(self.acct.get("target_value", 800))),
+            "target": settings.account_plan(self.cfg)[1],
+            "goal_hit": bool(end_v >= settings.account_plan(self.cfg)[1]),
             "note": ("回测口径：point-in-time 逐日重建池 + 前 {} 个交易日预热不计入统计"
-                     "（不含消息面，非投资建议）".format(warmup_n)),
+                     "；当日消息分来自十年消息库（strategy.replay_news={}），"
+                     "情绪分仅覆盖有快照的日期（历史区间为空，不做前视填补）"
+                     "（非投资建议）".format(
+                         warmup_n,
+                         bool((self.cfg.get("strategy") or {}).get("replay_news",
+                                                                  True)))),
             "series": rows,
         }
 
@@ -1326,7 +2058,11 @@ class Engine:
         nav_series = self._ffill_navs(dates, hist)
         sub = Ledger(":memory:",
                      initial_cash=float(self.acct.get("initial_cash", 500)))
-        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n)
+        rows = self.simulate(sub, dates, closes, vols, nav_series, warmup_n,
+                             news_map=(None if demo_flag
+                                       else self._replay_news_map(dates)),
+                             micro_map=(None if demo_flag
+                                        else self._replay_micro_map(dates)))
         sub.check_consistency(raise_on_mismatch=True, tol=0.02)
         n_stats = len(rows)  # 已剔除 warmup
         k = int(n_stats * (1.0 - test_frac))
@@ -1379,8 +2115,8 @@ class Engine:
             "warmup_days": warmup_n,
             "split_date": rows[k]["date"] if 0 <= k < n_stats else
                           (rows[-1]["date"] if rows else None),
-            "initial": float(self.acct.get("initial_cash", 500)),
-            "target": float(self.acct.get("target_value", 800)),
+            "initial": settings.account_plan(self.cfg)[0],
+            "target": settings.account_plan(self.cfg)[1],
             "full": full, "train": train, "test": test,
             "bench": {"full": bench_full, "train": bench_train,
                       "test": bench_test,
@@ -1405,6 +2141,14 @@ class Engine:
             from pathlib import Path
             for p in Path(str(util.CACHE_DIR)).glob("nav_*.json"):
                 codes.add(p.stem[4:])
+        except Exception:
+            pass
+        # 发布快照没有磁盘 JSON（缓存已收进 data/cache.db）→ 从库里列举净值缓存代码
+        try:
+            from . import cachestore
+            for c in cachestore.codes("nav_"):
+                if c:
+                    codes.add(c)
         except Exception:
             pass
         return sorted(codes)
@@ -1449,9 +2193,15 @@ class Engine:
                     for code in series["funds"]}
         else:
             try:
-                need_from = util.add_days(util.today_str(),
+                # 区间锚点：指定 end_date（历史区间回测/regime 留出期）时以它为准，
+                # 否则以今天为准。曾用“今天”硬算 need_from，导致 --months N 配历史
+                # end_date 取到空区间（2026-09 修复）。
+                anchor = str(end_date) if end_date else util.today_str()
+                need_from = util.add_days(anchor,
                                           -(months * 31 + int(warmup_n * 1.6) + 30))
-                idx = mkt.index_history(need_from=need_from)
+                # 历史区间（给了 end_date）走本地缓存，避免为回放消耗在线配额
+                idx = mkt.index_history(need_from=need_from,
+                                        offline=bool(end_date))
                 if len(idx) < warmup_n + 20:
                     raise DataError("在线K线不足（{}/{} 个交易日）".format(
                         len(idx), warmup_n + 20))
@@ -1548,23 +2298,142 @@ class Engine:
                                 -(x.get("mom20") if x.get("mom20") is not None else -9)))
         return out
 
-    def nav_latest_map(self):
+    def last_known_nav(self, code):
+        """该基金缓存里**最后一条已知净值**（(date, nav) 或 (None, None)）。
+
+        为什么不复用 `fund_latest()`（2026-09-16 事故的根治点）：
+        `fund_latest` → `fund_history(need_from=近45天)`，而 `fund_history` 的
+        `_serve()` 会**按 need_from 过滤**缓存。于是存在这样一条致命路径：
+        缓存明明有 2026-09-15 的净值，但只要"在线通道全失败 且 窗口过滤后为空"，
+        它就 **raise/返回空** → 调用方拿不到价。而调用方（估值）把"拿不到价"
+        当成"这只基金价值 0"，于是：
+            1007.22 → 421.00（正好少了全部股基 571.21）
+        → 回撤被算成 58.2% → 误触发"组合回撤 ≥15%"硬风控 → 强制降到 25% 仓位 + 5 天冷却。
+        实测过一次真实误判：2026-09-16 的研判原文写着"当前股基市值为0"。
+        这里直接读缓存**不做任何日期过滤**，只认"最后一次已知价"，保证估值永不凭空缩水。
+        """
+        try:
+            cache = util.load_json(self.market._nav_cache_path(code),
+                                   {"items": {}})
+        except Exception:
+            return (None, None)
+        items = (cache or {}).get("items") or {}
+        ds = sorted(d for d, n in items.items() if n and float(n) > 0)
+        if not ds:
+            return (None, None)
+        last = ds[-1]
+        return (last, float(items[last]))
+
+    def nav_latest_map(self, jobs=None):
+        """{code: (nav_date, nav)} —— 覆盖**当前池 ∪ 全部持仓**。
+
+        修 BUG（2026-09-11 审计发现，影响很直观）：旧实现只遍历 `_pool_items()`，
+        于是"动态池每周重建后，某只**仍持有**但已不在池里"的基金拿不到净值 →
+        界面把它的市值显示成 **¥0**、名称退化成代码，账户总值瞬间"蒸发"
+        （实测 1007.42 → 420.95，看起来像亏光了，其实只是没取价）。
+        持仓基金永远必须估值——它可能因为动量下滑被池子淘汰，但不代表资产不存在。
+
+        **二次修复（2026-09-16）**：上面那个症状又出现了一次（421.00 / 1007.42，
+        回撤 58.2%，还误触发了硬风控）。这次的原因不是"没遍历持仓"，而是
+        **取价失败被当成 0 元**：在线通道失败 + 窗口过滤后缓存为空 → 该持仓整条
+        从 `out` 里消失。现在补最后一道：**任何取不到实时价的持仓，一律回退到
+        缓存里的最后一条已知净值**（`last_known_nav`），宁可估值略旧，也绝不缩水。
+
+        性能（2026-09-15）：先吃进程内新鲜缓存（零网络），其余铺有界线程池联网。
+        """
+        codes = [f["code"] for f in self._pool_items()]
+        for c in self.ledger.positions():
+            if c not in codes:
+                codes.append(c)
         out = {}
-        for f in self._pool_items():
-            code = f["code"]
-            try:
-                if self.demo:
-                    s = self.market.demo_series() or {}
-                    fs = s.get("funds", {}).get(code)
-                    if fs:
-                        out[code] = (s.get("dates", [None])[-1], fs[-1])
-                else:
+        if self.demo:
+            s = self.market.demo_series() or {}
+            last = s.get("dates", [None])[-1]
+            for code in codes:
+                fs = s.get("funds", {}).get(code)
+                if fs:
+                    out[code] = (last, fs[-1])
+            return out
+        # 先吃"已经在内存里的新鲜缓存"（零网络），剩下的再并行联网
+        todo = []
+        for code in codes:
+            if self.market.nav_is_fresh(code):
+                try:
                     d, nav = self.market.fund_latest(code)
-                    if d:
-                        out[code] = (d, nav)
-            except DataError:
-                pass
+                except DataError:
+                    d = None
+                if d:
+                    out[code] = (d, nav)
+                else:
+                    # **第二条漏价路径**（2026-09-16 补）：`nav_is_fresh` 说"不用联网"，
+                    # 但 `fund_latest` → `fund_history(need_from=近45天)` 的 `_serve()`
+                    # 会按日期窗口过滤缓存；窗口内恰好没有净值时它返回空。
+                    # 旧实现在这里什么都不做 → 该持仓在 `out` 里缺席 →
+                    # 被估值当成 0 元（就是 58.2% 假回撤的来源）。这里立刻回退到
+                    # "缓存里最后一条已知净值"，不依赖下面统一的 `_fill_known`。
+                    d2, nav2 = self.last_known_nav(code)
+                    if d2:
+                        out[code] = (d2, nav2)
+                continue
+            todo.append(code)
+        if not todo:
+            return self._fill_known(codes, out)
+
+        def _one(code):
+            try:
+                d, nav = self.market.fund_latest(code)
+                return code, (d, nav) if d else None
+            except Exception:
+                return code, None
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            n = max(1, min(int(jobs or 8), len(todo)))
+            if n == 1:
+                for code in todo:
+                    c, pair = _one(code)
+                    if pair:
+                        out[c] = pair
+            else:
+                with ThreadPoolExecutor(max_workers=n) as ex:
+                    for c, pair in ex.map(_one, todo):
+                        if pair:
+                            out[c] = pair
+        except Exception:
+            # 线程池不可用（受限环境）→ 退回串行，行为不变
+            for code in todo:
+                c, pair = _one(code)
+                if pair:
+                    out[c] = pair
+        return self._fill_known(codes, out)
+
+    def _fill_known(self, codes, out):
+        """给 `out` 里**缺价**的代码补上"缓存里最后一次已知净值"（见 last_known_nav）。"""
+        missing = [c for c in codes if c not in out]
+        if not missing:
+            return out
+        filled = []
+        for c in missing:
+            d, nav = self.last_known_nav(c)
+            if d:
+                out[c] = (d, nav)
+                filled.append(c)
+        if filled:
+            self._nav_fallback_codes = filled
         return out
+
+    def name_anywhere(self, code):
+        """尽力解析基金名称：当前池 → config 池 → 动态候选池(universe) → 代码本身。
+
+        持仓基金被池子淘汰后也要显示名称（否则界面出现一串代码，无法辨认）。
+        """
+        for src in (self.pool_item(code),
+                    settings.fund_item(self.cfg, code),
+                    settings.universe_item(self.cfg, code)):
+            nm = (src or {}).get("name")
+            if nm:
+                return nm
+        return code
 
     def _positions_detail(self, nav_map):
         """按 nav_map({code:(nav_date,nav)}) 生成持仓明细（与 state.positions 同构）。"""
@@ -1580,7 +2449,7 @@ class Engine:
             pnl_pct = round((value - cost) / cost, 4) if cost > 0 else None
             positions.append({
                 "code": code,
-                "name": (item or {}).get("name") or code,
+                "name": self.name_anywhere(code),
                 "kind": self._kind(code),
                 "role": (item or {}).get("role", ""),
                 "shares": shares,
@@ -1634,13 +2503,95 @@ class Engine:
             "refreshed_at": util.now_iso(),
         }
 
+    def backfill_snapshots(self, days=7):
+        """资产曲线自愈：把最近 days 个交易日里缺失的快照补记出来（严格早于今天）。
+
+        逐日按账本自身流水重建（与当前记账同一口径，不编造点位）：
+          cash(d)    = seed_cash + Σ executed.cash_delta(date≤d)；
+          shares(d)  = Σ lots(buy_date≤d 的当前剩余) + Σ sell(date>d) 的份额
+                       （FIFO 卖出会改写批次剩余量，故过去日需回加其后卖出的部分）；
+          市值       = 份额 × 该日或最近一期的历史净值；任一持仓当日无净值 → 跳过该日。
+        同时清理早于实验开始日的历史遗留快照（它们会把曲线锚点带偏）。
+        返回补记天数。
+        """
+        meta = self.account()
+        start = meta.get("start_date")
+        today = util.today_str()
+        if start:
+            with self.ledger.conn:
+                self.ledger.conn.execute(
+                    "DELETE FROM snapshots WHERE date < ?", (start[:10],))
+        try:
+            idx = self.market.index_history() or []
+        except DataError:
+            return 0
+        closes = {r[0]: r[1] for r in idx}   # index_history: [(date, close, vol)]
+        lo = (start or today)[:10]
+        window = [d for d in sorted(closes) if lo <= d < today][-int(days):]
+        missing = [d for d in window if not self.ledger.has_snapshot(d)]
+        if not missing:
+            return 0
+        flows = self.ledger.cashflow_rows()
+        lots = self.ledger.lot_rows()
+        kind = {f["code"]: f.get("kind") for f in self._pool_items()}
+        base = self.ledger.seed_cash()
+        navh = {}
+        n = 0
+        for d in missing:
+            cash = base + sum(f[4] for f in flows if f[2] <= d)
+            fees_d = sum(f[5] for f in flows if f[2] <= d)
+            hold = {}
+            for code, bd, sh in lots:
+                if bd <= d:
+                    hold[code] = hold.get(code, 0.0) + float(sh)
+            for code, act, fd, sh in (
+                    (f[0], f[1], f[2], f[3]) for f in flows):
+                if act == "sell" and fd > d:
+                    hold[code] = hold.get(code, 0.0) + float(sh)
+            ok = True
+            mv_eq = mv_bond = 0.0
+            for code in sorted(hold):
+                sh = hold[code]
+                if sh <= 1e-9:
+                    continue
+                if code not in navh:
+                    try:
+                        navh[code] = list(self.market.fund_history(code) or [])
+                    except DataError:
+                        navh[code] = []
+                nav = None
+                for dt, nv in navh[code]:      # 升序取 ≤d 的最后一期
+                    if dt <= d:
+                        nav = nv
+                    else:
+                        break
+                if nav is None:
+                    ok = False                 # 当日无净值 → 不编造
+                    break
+                v = sh * float(nav)
+                if kind.get(code) == "bond":
+                    mv_bond += v
+                else:
+                    mv_eq += v
+            if not ok:
+                continue
+            self.ledger.add_snapshot(
+                d, util.r2(cash), util.r2(mv_eq), util.r2(mv_bond),
+                util.r2(cash + mv_eq + mv_bond), util.r2(fees_d),
+                closes.get(d), "回填")
+            n += 1
+        return n
+
     def state_payload(self):
         meta = self.account()
         today = util.today_str()
         nav_map = self.nav_latest_map()
         val = self._valuation(nav_map)
-        target = float(meta.get("target_value", 800))
         initial = float(meta.get("initial_cash", 500))
+        target = float(meta.get("target_value")
+                       or settings.account_plan(self.cfg)[1])
+        target_mult = float(meta.get("target_multiple")
+                            or settings.account_plan(self.cfg)[2])
         start = meta.get("start_date") or today
         end = meta.get("end_date") or util.add_days(start, HALF_YEAR_DAYS)
         days_left = max(0, (util.parse_d(end) - util.parse_d(today)).days)
@@ -1672,6 +2623,33 @@ class Engine:
             ds_label = lbl if online else lbl + "（离线缓存）"
         usage = self.market.usage()
         pool_items = self._pool_items()
+        # 代码→名称映射：**成交/指令与持仓都用它**，避免界面只显示基金代码
+        # （2026-09-15 用户反馈“成交记录没有基金名称只有代码”）。
+        # 覆盖：当前动态池 ∪ config 池 ∪ 全量候选池 ∪ 全部持仓 ∪ 账本里出现过的所有代码；
+        # 名称解析优先级与 name_anywhere 一致，取不到就回退代码本身。
+        # 必须先算：下面的 pool_info / 持仓 / 指令都用同一个映射。
+        name_map = {}
+        codes = set()
+        for src in (pool_items or [], settings.pool_of(self.cfg) or [],
+                    settings.universe_of(self.cfg) or []):
+            for it in src:
+                if it.get("code"):
+                    codes.add(str(it["code"]))
+                    if it.get("name"):
+                        name_map.setdefault(str(it["code"]), it["name"])
+        for c in (self.ledger.positions() or {}):
+            codes.add(str(c))
+        for o in (self.ledger.orders() or []):
+            if o.get("fund_code"):
+                codes.add(str(o["fund_code"]))
+        try:
+            from . import cachestore
+            codes.update(cachestore.codes("nav_"))
+        except Exception:
+            pass
+        for c in codes:
+            if c not in name_map:
+                name_map[c] = self.name_anywhere(c)
         pool_info = {
             "count": len(pool_items),
             "equity": sum(1 for f in pool_items if f.get("kind") == "equity"),
@@ -1682,6 +2660,7 @@ class Engine:
                               or {}).get("min_total", 8)),
             "screening_enabled": bool((settings.screening_of(self.cfg)
                                        or {}).get("enabled")),
+            "fund_names": dict(name_map),
         }
         return {
             "name": meta.get("name"),
@@ -1695,6 +2674,7 @@ class Engine:
             "est_trading_days": est_td,
             "initial": initial,
             "target": target,
+            "target_multiple": target_mult,
             "cash": val["cash"],
             "mv_eq": val["mv_eq"],
             "mv_bond": val["mv_bond"],
@@ -1709,6 +2689,13 @@ class Engine:
             "positions": positions,
             "pending_orders": pending,
             "last_record": last_rec[0] if last_rec else None,
+            "intraday": (self._screen().intraday_stats(1) or {}).get("latest"),
+            # 风险过滤：关闭时（十年回测不支持默认启用）不展示陈旧信号，避免误导
+            "risk_overlay": (
+                {"action": "off", "scale": 1.0, "p_up": None,
+                 "reason": "风险过滤已关闭（十年全量回测显示日频择时为负贡献，见 README「5.6 风控」）"}
+                if not (self.cfg.get("strategy") or {}).get("risk_overlay_enable", True)
+                else (util.load_json(util.data_file(risk_overlay.SIGNAL_FILE), {}) or {})),
             "last_snapshot": last_snap,
             "warnings": self.market.warnings[-8:],
         }

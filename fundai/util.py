@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """通用工具：路径、日期、HTTP、JSON、金额格式化。仅标准库。"""
 import json
+import os
 import re
 import socket
 import time
@@ -9,7 +10,27 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parent.parent
+
+def _project_root():
+    """项目根目录（数据/配置/静态资源的落点）。
+
+    优先级（2026-09-11 加入，为打包准备）：
+      1. 环境变量 `FUNDAI_HOME`：安装版（pip/wheel）或想换数据目录时用；
+      2. 源码树：`fundai/` 的上一级 —— 便携包与开发环境都是这个布局。
+    """
+    import os
+    env = os.environ.get("FUNDAI_HOME")
+    if env:
+        p = Path(env).expanduser()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT = _project_root()
 DATA_DIR = PROJECT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 DEMO_DIR = DATA_DIR / "demo"
@@ -100,19 +121,37 @@ def calendar_dates():
 
 
 def _trading_dates_between(start, end, cal):
-    """在 [start,end] 内按 cal 或工作日近似生成交易日字符串（升序）。"""
-    out = []
+    """在 [start,end] 内按 cal 或工作日近似生成交易日字符串（升序）。
+
+    注意：K线日历只覆盖到**历史**交易日 —— 若查询窗口越过日历终点（如“今天→未来
+    截止日”），日历内取完后，**日历终点之后**用工作日近似补齐（剔周末；法定节假日
+    无法预知 → 近似），否则会误返回空列表（仪表盘“距截止日已无交易日”的根因）。
+    """
+    lo, hi = parse_d(start), parse_d(end)
+    if hi < lo:
+        return []
     if cal:
-        lo, hi = parse_d(start), parse_d(end)
+        out = []
         for d in cal:
             dd = parse_d(d)
-            if lo <= dd <= hi:
-                out.append(d)
-            elif dd > hi:
+            if dd < lo:
+                continue
+            if dd > hi:
                 break
+            out.append(d)
+        cur = max(lo, parse_d(cal[-1]) + timedelta(days=1))
+        seen = set(out)
+        while cur <= hi:
+            if cur.weekday() < 5:
+                ds = fmt_d(cur)
+                if ds not in seen:
+                    out.append(ds)
+                    seen.add(ds)
+            cur += timedelta(days=1)
         return out
-    d, e = parse_d(start), parse_d(end)
-    while d <= e:
+    out = []
+    d = lo
+    while d <= hi:
         if d.weekday() < 5:
             out.append(fmt_d(d))
         d += timedelta(days=1)
@@ -267,13 +306,61 @@ def http_post_json(url, payload, headers=None, timeout=60, tries=1):
 
 
 # ---------------- JSON 文件 ----------------
-def load_json(path, default=None):
+def write_json_atomic(path, obj, indent=2, tries=4):
+    """原子写 JSON：临时文件 + os.replace（旧内容不会出现“写一半”的损坏态）。
+
+    与 save_json 的差别：不抛异常（返回 True/False），供计数这类「写失败也不能
+    打断主流程」的场景使用；失败前重试，便于多进程/多线程并发写同一文件。
+    返回 True=已落盘。
+    """
+    p = Path(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=indent),
+                       "utf-8")
+    except Exception:
+        return False
+    for i in range(max(1, int(tries))):
+        try:
+            os.replace(str(tmp), str(p))
+            return True
+        except OSError:
+            time.sleep(0.15 * (i + 1))
+        except Exception:
+            return False
+    return False
+
+
+def load_json(path, default=None, use_cache_db=True):
+    """读 JSON。**磁盘文件优先，其次查缓存库 `data/cache.db`**。
+
+    为什么加库这一层（2026-09-12）：`data/cache/` 下是按日/按代码切分的缓存
+    （`micro_<date>.json` 约 260 个、`nav_<code>.json` 几十个……），文件数可达上千。
+    发布快照把这些 JSON 收进单个 `data/cache.db`（见 `fundai/cachestore.py`），
+    所以这里加一条**只读回退**：文件在 → 用文件（本机行为与之前逐位一致）；
+    文件不在 → 查库（发布快照解压后就能直接跑）；都没有 → 返回 default（同旧行为）。
+
+    `use_cache_db=False`：**只认磁盘文件**。给"缓存路径被临时改到别处"的场景用
+    （离线回测/审计用例会把 K线缓存路径重定向到临时目录，此时绝不能被项目里的
+    缓存库"接上"，否则那些用例的前提——"缓存为空"——就不成立了）。
+
+    写入路径（`save_json`）不受影响：本机照旧写 JSON 文件。
+    """
     p = Path(path)
     if p.exists():
         try:
             return json.loads(p.read_text("utf-8"))
         except Exception:
             return default
+    if use_cache_db:
+        try:
+            from . import cachestore
+            v = cachestore.fallback_for(p, None, allow=True)
+            if v is not None:
+                return v
+        except Exception:
+            pass
     return default
 
 

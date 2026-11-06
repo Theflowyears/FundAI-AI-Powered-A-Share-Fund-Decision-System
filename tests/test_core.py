@@ -60,6 +60,175 @@ class CalendarTest(unittest.TestCase):
         self.assertEqual(days, ["2024-10-08", "2024-10-09", "2024-10-10",
                                 "2024-10-11", "2024-10-14"])
 
+    def test_window_beyond_calendar_end(self):
+        """窗口越过日历终点（今天→未来截止日）：日历内取精确、终点后工作日近似补齐。
+
+        回归仪表盘 bug：“距截止日已无交易日/还需日均收益显示不出”——K线日历只覆盖
+        历史，“今天→2027-03-08”在日历内取不到任何日期，误返回空列表。
+        """
+        util.set_calendar(["2026-09-07", "2026-09-08", "2026-09-09"])
+        # 09-10(四)→09-18(五)：日历终点后全部工作日近似，剔周末 12/13 → 共 7 天
+        days = util.trading_days_between("2026-09-10", "2026-09-18")
+        self.assertEqual(days, ["2026-09-10", "2026-09-11", "2026-09-14",
+                                "2026-09-15", "2026-09-16", "2026-09-17",
+                                "2026-09-18"])
+        # 混合窗口：日历内保持精确（09-09），终点后 09-10/11 用近似
+        days2 = util.trading_days_between("2026-09-09", "2026-09-11")
+        self.assertEqual(days2, ["2026-09-09", "2026-09-10", "2026-09-11"])
+        # 完全在日历内：不多不少、不混入近似
+        days3 = util.trading_days_between("2026-09-07", "2026-09-09")
+        self.assertEqual(days3, ["2026-09-07", "2026-09-08", "2026-09-09"])
+
+
+class BackfillSnapshotTest(unittest.TestCase):
+    """资产曲线自愈回填：cash=seed+流水(≤d)，份额=剩余批次+其后卖出；不编造点位。"""
+
+    def setUp(self):
+        import os
+        import tempfile
+        self.db = os.path.join(tempfile.mkdtemp(), "t.db")
+
+    def _engine(self, idx, nav_map, start="2024-09-01", seed="1000.0"):
+        from fundai.engine import Engine
+        from fundai.ledger import Ledger
+        lg = Ledger(self.db, initial_cash=1000.0)
+        lg.set_meta("seed_cash", seed)
+        e = Engine.__new__(Engine)
+        e.ledger = lg
+        e.demo = False
+        e.account = lambda: {"start_date": start, "initial_cash": 1000.0}
+        e._pool_items = lambda: [{"code": "002199", "kind": "equity"},
+                                 {"code": "270049", "kind": "bond"}]
+
+        class FakeMarket:
+            def index_history(self_):
+                return idx
+
+            def fund_history(self_, code):
+                return nav_map[code]
+        e.market = FakeMarket()
+        return e, lg
+
+    @staticmethod
+    def _exec(lg, code, act, d, sh, cd, fee=0.0):
+        lg.conn.execute("INSERT INTO executed(code,action,date,shares,nav,fee,"
+                        "cash_delta,note) VALUES(?,?,?,?,?,?,?,?)",
+                        (code, act, d, sh, 1.0, fee, cd, "t"))
+        lg.conn.commit()
+
+    def test_reconstruct_and_purge_stale(self):
+        idx = [("2024-09-02", 4500.0, 0), ("2024-09-03", 4510.0, 0),
+               ("2024-09-04", 4520.0, 0), ("2024-09-05", 4530.0, 0),
+               ("2024-09-06", 4540.0, 0)]
+        nav = {"002199": [("2024-09-02", 0.89), ("2024-09-03", 0.90),
+                           ("2024-09-04", 0.91), ("2024-09-05", 0.92),
+                           ("2024-09-06", 0.93)],
+               "270049": [("2024-09-02", 1.24), ("2024-09-03", 1.25),
+                          ("2024-09-04", 1.25), ("2024-09-05", 1.25),
+                          ("2024-09-06", 1.26)]}
+        e, lg = self._engine(idx, nav)
+        # 脏快照（早于开始日的历史遗留）应被清掉
+        lg.add_snapshot("2024-08-01", 500, 0, 0, 500, 0, 4400.0, "旧")
+        lg.add_lot("002199", "2024-09-02", 237.07, 0.89, 0.0)   # 当前剩余(已扣卖出)
+        lg.add_lot("270049", "2024-09-02", 112.51, 1.24, 0.0)
+        self._exec(lg, "002199", "buy", "2024-09-02", 337.07, -300.0)
+        self._exec(lg, "270049", "buy", "2024-09-02", 112.51, -140.0)
+        self._exec(lg, "002199", "sell", "2024-09-05", 100.0, 89.0)
+        n = e.backfill_snapshots(days=7)
+        self.assertEqual(n, 5)
+        snaps = {r["date"]: r for r in lg.get_snapshots()}
+        self.assertNotIn("2024-08-01", snaps)                       # 脏点已清
+        s2, s6 = snaps["2024-09-02"], snaps["2024-09-06"]
+        self.assertAlmostEqual(s2["cash"], 560.0, places=2)         # 1000-300-140
+        self.assertAlmostEqual(s2["mv_eq"], 337.07 * 0.89, places=1)  # 卖出日前的份额
+        self.assertAlmostEqual(s2["mv_bond"], 112.51 * 1.24, places=1)
+        self.assertAlmostEqual(s2["total"], 560 + 337.07 * 0.89 + 112.51 * 1.24,
+                               places=1)
+        self.assertEqual(s2["index_close"], 4500.0)
+        self.assertAlmostEqual(s6["cash"], 649.0, places=2)        # 卖出回款后
+        self.assertAlmostEqual(s6["mv_eq"], 237.07 * 0.93, places=1)  # 卖出后剩余
+        # 已有快照的日期不覆盖（幂等）
+        self.assertEqual(e.backfill_snapshots(days=7), 0)
+
+    def test_skip_day_without_nav(self):
+        idx = [("2024-09-02", 4500.0, 0), ("2024-09-03", 4510.0, 0)]
+        nav = {"002199": [("2024-09-03", 0.90)],          # 09-02 无净值
+               "270049": [("2024-09-02", 1.24), ("2024-09-03", 1.25)]}
+        e, lg = self._engine(idx, nav)
+        lg.add_lot("002199", "2024-09-02", 100.0, 0.9, 0.0)
+        self._exec(lg, "002199", "buy", "2024-09-02", 100.0, -90.0)
+        n = e.backfill_snapshots(days=7)
+        self.assertEqual(n, 1)                              # 09-02 跳过，不编造
+        self.assertTrue(lg.has_snapshot("2024-09-03"))
+        self.assertFalse(lg.has_snapshot("2024-09-02"))
+
+
+class AutoArchiveNewsTest(unittest.TestCase):
+    """例行披露/同模板批量消息：AI 自动归档，不占人工复核额度（2026-09-10 用户反馈）。"""
+
+    def test_holdings_disclosure_event(self):
+        from fundai import semantics
+        ev = semantics.classify_event(
+            "财联社9月10日电，香港交易所信息显示，摩根大通（JPMorgan）在药明康德H股"
+            "的持股比例于09月07日从9.90%升至10.01%，购买的平均股价为191.7113港元。", "")
+        self.assertEqual(ev["event"], "holdings_disclosure")
+        self.assertEqual(ev["label"], "neutral")
+        self.assertEqual(ev["strength"], 0)
+        # 减持方向也归此类（趋势性、无大盘方向）
+        ev2 = semantics.classify_event(
+            "香港交易所信息显示，某机构在该股的持股比例从12.3%降至11.1%。", "")
+        self.assertEqual(ev2["event"], "holdings_disclosure")
+        # 普通的增持/回购公告不受影响（仍走 holder_flow 方向判断）
+        ev3 = semantics.classify_event("某公司公告：控股股东拟增持公司股份", "")
+        self.assertEqual(ev3["event"], "holder_flow")
+        self.assertEqual(ev3["label"], "bull")
+
+    def test_collapse_same_template(self):
+        from fundai import screening
+        mk = lambda i, title: {
+            "item_id": "x%d" % i, "title": title, "auto_label": "neutral",
+            "user_label": "", "event_type": "dict"}
+        items = [
+            mk(1, "财联社9月10日电，香港交易所信息显示，摩根大通（JPMorgan）在中兴通讯H股"
+                  "的持股比例于09月07日从5.91%升至6.14%，购买的平均股价为23.6934港元。"),
+            mk(2, "财联社9月10日电，香港交易所信息显示，摩根大通（JPMorgan）在中际旭创H股"
+                  "的持股比例于09月07日从13.44%升至14.01%，购买的平均股价为1144.5338港元。"),
+            mk(3, "财联社9月10日电，香港交易所信息显示，摩根大通（JPMorgan）在药明康德H股"
+                  "的持股比例于09月07日从9.90%升至10.01%，购买的平均股价为191.7113港元。"),
+            mk(4, "重要通知：今日市场成交显著放量，北向资金净流入超百亿"),
+        ]
+        kept, dupes = screening.collapse_same_template(items)
+        self.assertEqual([k["item_id"] for k in kept], ["x1", "x4"])
+        self.assertEqual({d["item_id"] for d in dupes}, {"x2", "x3"})
+        self.assertTrue(all(d["_dup_of"] == "x1" for d in dupes))
+        # 方向明确的消息不参与归并（该进哪进哪）
+        items2 = [dict(items[0], auto_label="bull"), dict(items[1], auto_label="bull")]
+        kept2, dupes2 = screening.collapse_same_template(items2)
+        self.assertEqual(len(kept2), 2)
+        self.assertEqual(dupes2, [])
+        # 命中自动归档事件类型的（重新打分后）也不进归并池
+        items3 = [dict(items[0], event_type="holdings_disclosure"),
+                  dict(items[1], event_type="holdings_disclosure")]
+        kept3, dupes3 = screening.collapse_same_template(items3)
+        self.assertEqual((len(kept3), len(dupes3)), (2, 0))
+
+
+class LlmLabelTest(unittest.TestCase):
+    """记录来源展示名：provider 是模板默认 deepseek 而 model 实为其他家族时，按真实模型显示。"""
+
+    def test_label_follows_real_model_family(self):
+        from fundai import analysis
+        self.assertEqual(analysis.llm_label(
+            {"llm": {"provider": "deepseek", "model": "qwen3.8-flash"}}), "Qwen")
+        self.assertEqual(analysis.llm_label(
+            {"llm": {"provider": "deepseek", "model": "deepseek-chat"}}), "DeepSeek")
+        # 显式自定义（非默认值）的 provider 原样尊重
+        self.assertEqual(analysis.llm_label(
+            {"llm": {"provider": "MyGateway", "model": "gpt-4o"}}), "MyGateway")
+        self.assertEqual(analysis.llm_label({}), "DeepSeek")
+        self.assertEqual(analysis.llm_label(
+            {"llm": {"provider": "", "model": "glm-4"}}), "GLM")
+
 
 class RedactTest(unittest.TestCase):
     def test_token_redacted(self):
@@ -209,12 +378,13 @@ class NewsCacheTest(unittest.TestCase):
                  "source": "x", "time": "09:00", "sectors": [], "funds": []}]
         util.save_json(self.path, {"ok": True, "date": self.date_s,
                                    "items": 1, "feed": feed,
-                                   "schema": 2, "bull": [], "bear": [],
+                                   "schema": news_mod.NEWS_SCHEMA,
+                                   "bull": [], "bear": [],
                                    "net": 2, "score": 16, "amplitude": 8})
         obj = news_mod.load_news(self.date_s, amplitude=8, cfg=None)
         self.assertTrue(obj["ok"])
         self.assertEqual(len(obj["feed"]), 1)
-        self.assertEqual(obj["schema"], 2)
+        self.assertEqual(obj["schema"], news_mod.NEWS_SCHEMA)
 
 
 class KlineFinalBarTest(unittest.TestCase):
@@ -225,14 +395,27 @@ class KlineFinalBarTest(unittest.TestCase):
         self.assertTrue(Market._bar_is_final("2026-09-08 23:59:59"))
 
     def test_drop_partial_today(self):
+        # 注意：函数内部用“真实当前时刻”判定 → 用 now_dt 打桩固定时钟，
+        # 否则本测试在 15:05 前运行必挂（时间依赖修复）。
+        from datetime import datetime
         today = util.today_str()
-        items = {"2026-09-08": [4500.0, 170000000.0], today: [4520.0, 95000000.0]}
-        # 盘中(15:05 前)抓到的当日 bar → 剔除，回到上一交易日
-        out = Market._drop_partial_today(dict(items), "{} 12:42:10".format(today))
-        self.assertNotIn(today, out)
-        # 收盘后抓的当日 bar → 保留
-        out2 = Market._drop_partial_today(dict(items), "{} 20:00:00".format(today))
-        self.assertIn(today, out2)
+        base = datetime.strptime(today, "%Y-%m-%d")
+        old_now = util.now_dt
+        try:
+            util.now_dt = lambda: base.replace(hour=12, minute=42)
+            items = {"2026-09-08": [4500.0, 170000000.0],
+                     today: [4520.0, 95000000.0]}
+            # 盘中(15:05 前)抓到的当日 bar → 剔除，回到上一交易日
+            out = Market._drop_partial_today(dict(items),
+                                             "{} 12:42:10".format(today))
+            self.assertNotIn(today, out)
+            util.now_dt = lambda: base.replace(hour=20, minute=0)
+            # 收盘后抓的当日 bar → 保留
+            out2 = Market._drop_partial_today(dict(items),
+                                              "{} 20:00:00".format(today))
+            self.assertIn(today, out2)
+        finally:
+            util.now_dt = old_now
 
     def test_kline_seq_filter(self):
         items = {"2026-09-07": [4500.0, 1.0], "2026-09-08": [4510.0, 2.0]}
@@ -259,10 +442,20 @@ class TermLearningTest(unittest.TestCase):
         self.assertFalse(lexicon.termness("火车站广场"))
 
     def test_learn_only_fin_terms(self):
+        """学习只认**完整金融术语**，且必须有**市场真实反应**才产出方向先验。
+
+        2026-09-16 口径重做后，学习的事实来源是"含该术语的消息 + 次日沪深300实际涨跌"，
+        所以本用例同时覆盖两种情况：
+          ① 没有反应数据 → 学不出任何东西（不发散、不猜）；
+          ② 有反应数据 → 学到的仍然只能是白名单术语，碎片（火车站/爆炸/现场救援）绝不入表。
+        """
+        import os
+        import sqlite3
+        import tempfile
         from fundai import lexicon
         from fundai import screening
-        scr = screening.ScreeningStore(":memory:")
-        feed = [
+
+        base = [
             {"id": "d1", "title": "固态电池量产提速 头部企业拿下大额订单",
              "text": "固态电池装车 概念股走强 板块活跃", "auto_label": "bull",
              "auto_strength": 1, "source": "x", "time": "10:00"},
@@ -273,19 +466,45 @@ class TermLearningTest(unittest.TestCase):
              "text": "爆炸波及周边地区 伤亡情况不明", "auto_label": "bear",
              "auto_strength": -1, "source": "x", "time": "10:02"},
         ]
-        scr.ingest_feed("2026-09-01", feed, skip_recent=False)
+
+        # ① 无反应数据：不产出方向先验
+        scr = screening.ScreeningStore(":memory:")
+        scr.ingest_feed("2026-09-01", base, skip_recent=False)
+        self.assertEqual(scr.learn_terms(), 0,
+                         "没有市场反应样本时不该产出任何方向先验")
+        self.assertEqual(scr.lexicon_rows(100), [])
+        scr.close()
+
+        # ② 有反应数据（8 个交易日，指数上涨）
+        tmp = tempfile.mkdtemp(prefix="fundai_core_learn_")
+        led = os.path.join(tmp, "ledger.db")
+        con = sqlite3.connect(led)
+        con.execute("CREATE TABLE records(date TEXT PRIMARY KEY, index_close REAL)")
+        days = ["2026-09-%02d" % (1 + i) for i in range(9)]
+        for i, d in enumerate(days):
+            con.execute("INSERT OR REPLACE INTO records VALUES(?,?)",
+                        (d, 1000.0 + i * 10.0))
+        con.commit()
+        con.close()
+        scr = screening.ScreeningStore(os.path.join(tmp, "screen.db"))
+        scr._ledger_db = led
+        for i, d in enumerate(days[:8]):
+            scr.ingest_feed(d, base, skip_recent=False)
         with scr.conn:
-            scr.conn.execute("UPDATE items SET user_label='bull',"
-                             "user_strength=1 WHERE item_id IN ('d1','d2')")
-            scr.conn.execute("UPDATE items SET user_label='bear',"
-                             "user_strength=-1 WHERE item_id='d3'")
-        n = scr.learn_all()
+            scr.conn.execute("UPDATE items SET user_label='bull', user_strength=1 "
+                             "WHERE item_id IN ('d1','d2')")
+            scr.conn.execute("UPDATE items SET user_label='bear', user_strength=-1 "
+                             "WHERE item_id='d3'")
+        n = scr.learn_terms()
         learned = {w["word"] for w in scr.lexicon_rows(1000)}
         # 与金融术语无关的碎片（火车站/爆炸/现场）不应被学
         self.assertFalse(learned & {"火车站", "火车站广场", "爆炸", "现场救援"})
         # 术语化的常见表达至少学到一个
-        self.assertTrue(learned & {"固态电池", "电池"})
+        self.assertTrue(learned & {"固态电池", "电池"}, "学到的词：{}".format(learned))
         self.assertGreaterEqual(n, 1)
+        # 学到的每一项都必须是白名单术语（学习不再凭空造词）
+        self.assertTrue(all(w in lexicon.FIN_TERMS for w in learned),
+                        "学到了非白名单词：{}".format(learned - set(lexicon.FIN_TERMS)))
         scr.close()
 
 
@@ -315,6 +534,38 @@ class NewsCleanTest(unittest.TestCase):
         titles = [e["title"] for e in obj["feed"]]
         self.assertIn("央行开展逆回购操作 维护流动性合理充裕", titles)
         self.assertNotIn("某地火车站发生爆炸 造成人员受伤", titles)
+
+    def test_importance_and_cls_fields_flow_to_store(self):
+        """财联社字段：url 保留、重要电报标 🔴，并可入库持久化 important 列。"""
+        import fundai.news as nm
+        from fundai import screening
+        items = [
+            {"source": "财联社电报", "time": "10:00",
+             "title": "突发！央行宣布降准", "text": "央行降准 释放长期流动性",
+             "url": "https://www.cls.cn/detail/1"},
+            {"source": "东财快讯", "time": "10:01",
+             "title": "某公司召开股东会审议年报议案", "text": "会议正常召开",
+             "url": ""},
+        ]
+        old_collect, old_learned = nm._collect_all, nm.learned_extra
+        nm._collect_all = lambda: items
+        nm.learned_extra = lambda: {}
+        try:
+            obj = nm.fetch_news(amplitude=8, cfg=None)
+        finally:
+            nm._collect_all, nm.learned_extra = old_collect, old_learned
+        emap = {e["title"]: e for e in obj["feed"]}
+        imp = emap.get("突发！央行宣布降准")
+        self.assertIsNotNone(imp)
+        self.assertEqual(imp["important"], 1)
+        self.assertEqual(imp["url"], "https://www.cls.cn/detail/1")
+        # 普通公司公告不标重要
+        self.assertEqual(emap["某公司召开股东会审议年报议案"]["important"], 0)
+        scr = screening.ScreeningStore(":memory:")
+        scr.ingest_feed("2026-09-10", obj["feed"], skip_recent=False)
+        rows = {r["title"]: r for r in scr.items_for("2026-09-10")}
+        self.assertEqual(rows["突发！央行宣布降准"]["important"], 1)
+        scr.close()
 
     def test_norm_title(self):
         from fundai import screening
@@ -368,20 +619,49 @@ class NewsCleanTest(unittest.TestCase):
         self.assertFalse(screening.ScreeningStore._fuzzy_dup([a], b, 0.93))
 
     def test_review_split_caps_at_50(self):
+        """人工额度按**把握度**分流：最没把握的最多 cap 条进人工，其余自动采纳。
+
+        2026-09-16 口径：旧版用"auto_label == neutral"当判据，会把"AI 很确定地判成中性"
+        的消息（例行披露之类）也推给人工，白占额度；现在按 `confidence` 判断。
+        """
         from fundai import screening
-        mk = lambda i, a, u="": {"item_id": i, "auto_label": a, "user_label": u}
+        # 60 条低把握度（0.2）+ 2 条高把握度（0.9）+ 1 条已人工打标
+        mk = lambda i, a, u="", c=0.2: {"item_id": i, "auto_label": a,
+                                       "user_label": u, "confidence": c}
         items = [mk(str(i), "neutral") for i in range(60)] + \
-                [mk("b1", "bull"), mk("b2", "bear"), mk("d1", "bull", "bull")]
+                [mk("b1", "bull", c=0.9), mk("b2", "bear", c=0.9),
+                 mk("d1", "bull", "bull", c=None)]
         top, extra, ai, done = screening.ScreeningStore.review_split(items, 50)
-        self.assertEqual(len(top), 50)
-        self.assertEqual(len(extra), 10)
-        self.assertEqual(len(ai), 2)
+        self.assertEqual(len(top), 50, "低把握度队列应按 cap 截断")
+        self.assertEqual(len(extra), 10, "超出额度的低把握度消息不排入人工")
+        self.assertEqual(len(ai), 2, "高把握度消息由 AI 直接采纳")
         self.assertEqual(len(done), 1)
+        # 高把握度的中性消息**不该**占人工额度（这是本次改造的核心）
+        top_ids = {r["item_id"] for r in top}
+        self.assertNotIn("b1", top_ids)
+        self.assertNotIn("b2", top_ids)
+
+    def test_review_split_prioritises_least_confident(self):
+        """人工队列要按把握度**升序**：先让人看最不确定的那几条。"""
+        from fundai import screening
+        mk = lambda i, c: {"item_id": i, "auto_label": "neutral",
+                           "user_label": "", "confidence": c}
+        items = [mk("hi", 0.44), mk("mid", 0.30), mk("lo", 0.05)]
+        top, extra, ai, done = screening.ScreeningStore.review_split(
+            items, 50, low_conf=0.45)
+        self.assertEqual([r["item_id"] for r in top], ["lo", "mid", "hi"])
+        self.assertEqual(ai, [], "三条都低于阈值 → 都进人工队列")
+        # 阈值调低后，把握度尚可的不再占用人工额度
+        top2, extra2, ai2, _ = screening.ScreeningStore.review_split(
+            items, 50, low_conf=0.10)
+        self.assertEqual([r["item_id"] for r in top2], ["lo"])
+        self.assertEqual(len(ai2), 2)
 
     def test_news_score_cap(self):
         from fundai.engine import combine_score
-        cfg = settings.load_config()
-        cfg.setdefault("strategy", {})["news_score_cap"] = 25
+        # 显式钉住权重，避免随 config 调整而失效（消息 0.35 仅用于本用例）
+        cfg = {"strategy": {"news_weight": 0.35, "news_score_cap": 25,
+                            "micro_weight": 0.0}}
         self.assertEqual(combine_score(cfg, 0, 64), 9)   # 64 被限到 25：25*0.35≈9
         self.assertEqual(combine_score(cfg, 0, 8), 3)     # 8*0.35=2.8 → 3
         self.assertEqual(combine_score(cfg, 0, -100), -9)
@@ -523,6 +803,79 @@ class SignalCalibTest(unittest.TestCase):
         self.assertEqual(labels["某中东国家冲突加剧"], "bear")
         self.assertEqual(feed[0]["source"], "财联社电报(手动导入)")
         self.assertTrue(all(f["event_type"] for f in feed))
+
+
+class ScoreCalcTest(unittest.TestCase):
+    """评分透明化：records.calc 存列/旧库迁移 + 消息分明细口径。"""
+
+    def test_record_calc_roundtrip_with_old_schema(self):
+        import os
+        import sqlite3
+        import tempfile
+        from fundai.ledger import Ledger
+        db = os.path.join(tempfile.mkdtemp(), "m.db")
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)")
+        con.execute("CREATE TABLE records(date TEXT PRIMARY KEY,"
+                    "market_score INTEGER, market_chg REAL, index_close REAL,"
+                    "view_title TEXT, source TEXT, analysis TEXT, decision TEXT)")
+        con.commit()
+        con.close()
+        lg = Ledger(db, initial_cash=1000.0)   # 旧库缺 calc 列 → 自动 ALTER
+        lg.add_record("2026-01-01", -15, 0.01, 4500.0, "观点", "src", "报告",
+                      "决策", calc='{"v": 1}')
+        r = lg.get_records()[0]
+        self.assertEqual(r["calc"], '{"v": 1}')
+        self.assertEqual(r["market_score"], -15)
+
+    def test_human_news_meta_scaled_anti_saturation(self):
+        """人工消息分同样受抗饱和刻度约束（旧口径打标多了必然顶格、零区分度）。"""
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        feed = [{"id": "h%d" % i, "title": "消息%d" % i, "text": "",
+                 "auto_label": "neutral", "auto_strength": 0, "auto_net": 0,
+                 "event_type": "dict", "auto_reason": "", "source": "x",
+                 "time": "09:0%d" % i} for i in range(3)]
+        scr.ingest_feed("2026-09-09", feed, skip_recent=False)
+        with scr.conn:
+            scr.conn.execute("UPDATE items SET user_label='bull', user_strength=1")
+        h = scr.human_news_meta("2026-09-09", amplitude=8, mode="scaled",
+                                scale=10.0)
+        self.assertAlmostEqual(h["net_raw"], 3.0, places=2)
+        self.assertAlmostEqual(h["net"], 0.3, places=3)      # 3/10
+        self.assertEqual(h["score"], 2)                      # 0.3×8=2.4→2
+        old = scr.human_news_meta("2026-09-09", amplitude=8, mode="sum")
+        self.assertEqual(old["net"], 3.0)
+        self.assertEqual(old["score"], 24)                   # 旧口径线性膨胀
+        scr.close()
+
+    def test_news_breakdown_human_and_auto(self):
+        from fundai import screening
+        scr = screening.ScreeningStore(":memory:")
+        feed = [
+            {"id": "h1", "title": "央行降准0.5个百分点", "text": "",
+             "auto_label": "bull", "auto_strength": 2, "auto_net": 2,
+             "event_type": "macro_policy", "auto_reason": "", "source": "x",
+             "time": "09:00"},
+            {"id": "h2", "title": "某公司拟减持", "text": "", "auto_label": "bear",
+             "auto_strength": -1, "auto_net": -1, "event_type": "holder_flow",
+             "auto_reason": "", "source": "x", "time": "09:01"},
+            {"id": "h3", "title": "交易所调整保证金通知", "text": "",
+             "auto_label": "neutral", "auto_strength": 0, "auto_net": 0,
+             "event_type": "dict", "auto_reason": "", "source": "x", "time": "09:02"},
+        ]
+        scr.ingest_feed("2026-09-09", feed, skip_recent=False)
+        with scr.conn:
+            scr.conn.execute("UPDATE items SET user_label='big_bull',"
+                             "user_strength=3 WHERE item_id='h1'")
+        auto = scr.news_breakdown("2026-09-09", human_mode=False)
+        self.assertEqual(auto["net"], 1.0)          # +2-1，中性不计
+        self.assertEqual([i["title"] for i in auto["items"]],
+                         ["央行降准0.5个百分点", "某公司拟减持"])   # |强度|降序
+        hum = scr.news_breakdown("2026-09-09", human_mode=True)
+        self.assertEqual(hum["net"], 3.0)           # 只统计人工方向打标
+        self.assertEqual(hum["counts"], {"big_bull": 1})
+        scr.close()
 
 
 if __name__ == "__main__":

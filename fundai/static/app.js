@@ -33,6 +33,30 @@ function toast(msg, type = "info") {
   setTimeout(() => el.remove(), type === "err" ? 6000 : 3500);
 }
 
+
+/* 配额文案：只有智兔有上限，其余通道不限量（2026-09-15 口径修正） */
+function quotaBrief(ap) {
+  if (!ap) return "";
+  const zt = ap.zhitu_today ?? 0;
+  const lim = ap.zhitu_limit ?? ap.daily_limit;
+  const other = ap.other_calls_today ?? Math.max(0, (ap.calls_today || 0) - zt);
+  let s = " · 智兔 " + zt + (lim != null ? "/" + lim + " 次" : "（未配 Token）");
+  if (lim != null) s += "（剩余 " + (ap.zhitu_remaining ?? (lim - zt)) + "）";
+  if (other > 0) s += " · 其它通道 " + other + " 次（不限）";
+  return s;
+}
+function quotaLong(ap) {
+  if (!ap) return "—";
+  const parts = [];
+  for (const q of (ap.quota || [])) {
+    if (!q.calls && !q.limit) continue;
+    parts.push(`${SRC_LABEL[q.source] || q.source} ${q.calls} 次`
+      + (q.unlimited ? "（不限）" : `/${q.limit}（剩 ${q.remaining}）`));
+  }
+  if (!parts.length) parts.push(`今日 ${ap.calls_today || 0} 次`);
+  return parts.join(" · ");
+}
+
 /* ---------- 全局状态 ---------- */
 let ST = null;         // /api/state
 let HIST = [];         // snapshots
@@ -56,7 +80,7 @@ async function loadAll(quiet) {
     ST = s.state; HIST = h.snapshots || []; RECS = r.records || [];
     ORDERS = o.orders || []; FUNDS = f.funds || [];
     renderHeader(); renderDash(); renderRecords(); renderOrders(); renderFunds();
-    renderSettings(); renderSrcAlert(); tryRenderBt();
+    renderSettings(); renderSrcAlert(); renderBudget(); tryRenderBt();
     // echarts 就绪后与布局稳定后各重绘一次（容器可见才真正绘制）
     whenEcharts(redrawAll);
     setTimeout(() => { if (seq === loadSeq) whenEcharts(redrawAll); }, 600);
@@ -64,6 +88,8 @@ async function loadAll(quiet) {
     if (!quiet) toast("加载失败：" + e.message, "err");
   }
   loadIndices();
+  loadMarket();
+  loadMidday(true);
   api("/api/news/dirstats").then(j => {
     if (seq !== loadSeq) return;
     DIRS = j.stats || null;
@@ -82,13 +108,193 @@ function renderHeader() {
     : (ST.exec_mode === "manual" ? "人工执行模式：AI 建议 → 你亲自执行 → 录入成交"
         : "模拟自动成交（仅演示流程）");
   $("badgeExec").textContent = "模式：" + execTxt;
+  // 配额口径：**只有智兔有 200/日上限，其它通道不限**（别再显示"总调用/200"）
   $("badgeSrc").textContent = "数据源：" + ST.data_source +
-    (ST.api_usage ? " · 今日已用 " + ST.api_usage.calls_today + " 次" +
-      (ST.api_usage.daily_limit != null ? "/" + ST.api_usage.daily_limit + " 次" : "（智兔不限/akshare免费）") : "");
+    (ST.api_usage ? quotaBrief(ST.api_usage) : "");
   $("btnRun").style.display = ST.demo ? "none" : "";
 }
 
-/* ---------- 大盘指数条 ---------- */
+/* ---------- 午间复盘（午间诊断）：主界面显眼卡片 ---------- */
+let INTRA_MID = null;   // /api/intraday 载荷
+
+async function loadMidday(quiet) {
+  try {
+    const j = await api("/api/intraday");
+    INTRA_MID = j.intraday || null;
+  } catch (e) { if (!quiet) toast("读取午间诊断失败：" + e.message, "err"); }
+  renderMidday();
+}
+
+function renderMidday() {
+  const box = $("middayCard");
+  if (!box) return;
+  const m = INTRA_MID || {};
+  const today = m.today || {};
+  const st = m.stats || {};
+  const phase = (typeof MKT !== "undefined" && MKT && MKT.phase) || m.phase || "";
+  const live = ["am", "noon"].includes(phase);
+  const badge = $("middayBadge"), view = $("middayView"), meta = $("middayMeta");
+  const myView = m.view_text || today.dir_view || "";
+
+  if (!today.summary) {
+    // 没有当日诊断：把"为什么没有 / 怎么补救"说清楚，而不是只显示一句提示。
+    // 2026-09-16 事故：11:35 那次三家行情通道同时瞬断 → 整天没有诊断，
+    // 界面当时只说"今日还没有午间复盘"，看不出是"没跑"还是"跑了失败"。
+    if (badge) {
+      badge.textContent = m.last_error ? "执行失败" : "今日未运行";
+      badge.className = "badge warn";
+    }
+    if (view) view.textContent = m.last_error ? "取数失败，未生成复盘" : "尚未生成（可点右侧立即诊断）";
+    if (meta) {
+      meta.innerHTML = [
+        m.last_error ? `<span class="warn-txt">最近一次失败：${esc(m.last_error)}</span>` : "",
+        "自动班次：工作日 11:35（失败则 11:40 / 11:45 补跑）· 15:05 自动结算命中",
+        "机制：只描述上午发生了什么 + 下午要盯什么，不做次日预测；界面轮询不触发在线请求",
+      ].filter(Boolean).join(" · ");
+    }
+    box.innerHTML = `<div class="mut small" style="line-height:1.9">
+      ${m.last_error
+        ? `本次<b>没有取到实时行情</b>，所以没有强行编一个观点。可点【⚡ 立即诊断】重试；
+           若仍是失败，检查网络，或看 <code>data/intraday.log</code>。`
+        : `现在是${SESSION_TXT[phase] || "非交易时段"}。${live
+            ? "点【⚡ 立即诊断】即可生成午间复盘。"
+            : "诊断随时可跑；行情取当日最新一次（收盘后即为当天收盘数据）。"}`}
+      ${st.total ? `<br>历史自检：命中 ${st.hit}/${st.total}（${fmtPct0(st.hit_rate)}）` : ""}
+    </div>`;
+    return;
+  }
+  const hit = today.hit == null
+    ? '<span class="gold-txt">待收盘结算</span>'
+    : (today.hit ? '<span class="up">命中 ✓</span>' : '<span class="down">未中 ✗</span>');
+  if (badge) {
+    badge.textContent = `${today.time || ""} 诊断`;
+    badge.className = "badge " + (today.hit == null ? "warn" : "live");
+  }
+  if (view) view.textContent = myView || "—";
+  if (meta) {
+    meta.innerHTML = [
+      today.mid_chg == null ? "" : `上午 <b>${fmtPct(today.mid_chg)}</b>`,
+      `结算：${hit}`,
+      today.pm_chg == null ? "" : `下午 ${fmtPct(today.pm_chg)}`,
+      `历史自检：命中 <b>${st.hit || 0}/${st.total || 0}</b>（${st.hit_rate == null ? "—" : fmtPct0(st.hit_rate)}）`,
+    ].filter(Boolean).join(" · ");
+  }
+  box.innerHTML = `<div class="mut" style="line-height:1.9">${esc(today.summary || "")}</div>`;
+}
+
+/* ---------- 大盘概览 + 今日分时（主界面） ---------- */
+let MKT = null;          // /api/market/overview 载荷
+let INTRA = null;        // /api/market/intraday 载荷
+const SESSION_TXT = {
+  pre_open: "盘前", auction: "集合竞价", am: "上午盘", noon: "午间休市",
+  pm: "下午盘", closed: "已收盘", weekend: "周末休市",
+};
+const SESSION_LIVE = { auction: 1, am: 1, pm: 1 };
+
+let _mktRetry = null;   // warming 重试定时器（防抖：同一时刻只留一个）
+async function loadMarket() {
+  // 大盘概览：首次返回 warming=true（服务端正在后台统计全市场）→ 2 秒后重试一次
+  try {
+    const j = await api("/api/market/overview");
+    MKT = j.overview || null;
+    renderMktPanel();
+    if (MKT && MKT.warming && !_mktRetry) {
+      _mktRetry = setTimeout(() => { _mktRetry = null; loadMarket(); }, 2000);
+    }
+  } catch (e) { MKT = null; renderMktPanel(); }
+  loadIntraday();
+}
+
+async function loadIntraday() {
+  try {
+    const j = await api("/api/market/intraday");
+    INTRA = j.intraday || null;
+  } catch (e) { INTRA = null; }
+  renderIntraday();
+}
+
+function renderMktPanel() {
+  const g = $("mktGrid");
+  if (!g) return;
+  const o = MKT || {};
+  const of = $("mktAsOf");
+  if (of) {
+    of.textContent = o.ok
+      ? `统计 ${o.samples ?? 0} 只 · ${esc(String(o.asof || "").slice(11, 19))} 更新`
+        + (o.full === false ? "（样本统计中，稍后补全）" : "")
+      : (o.warming ? "首次统计中…" : (o.message || "暂不可用"));
+  }
+  if (!o.ok && !o.warming) {
+    g.innerHTML = `<div class="mut small">大盘概览暂不可用：${esc(o.message || "数据源未响应")}（不影响研判与持仓）</div>`;
+    return;
+  }
+  const rise = o.rise, fall = o.fall, flat = o.flat;
+  const tot = (rise || 0) + (fall || 0) + (flat || 0);
+  const bpct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+  const num = (v) => (v == null ? "—" : Number(v).toLocaleString("zh-CN"));
+  const tone = (v, good) => (v == null ? "" : (good ? "up" : "down"));
+  const cls = o.phase && SESSION_LIVE[o.phase] ? "live" : "warn";
+  const amt = o.amount_yi == null ? "—" : (o.amount_yi >= 10000
+    ? (o.amount_yi / 10000).toFixed(2) + " 万亿" : o.amount_yi.toFixed(0) + " 亿");
+  const cards = [
+    ["交易时段", SESSION_TXT[o.phase] || o.phase || "—", cls,
+      SESSION_LIVE[o.phase] ? "盘中 · 数据每 1 分钟刷新" : "非交易时段 · 显示最近一次数据"],
+    ["上涨家数", num(rise), tone(rise, true), `占比 ${bpct(o.breadth)}（涨/总）`],
+    ["下跌家数", num(fall), tone(fall, false), `平盘 ${num(flat)} 家`],
+    ["涨停 / 跌停", `${num(o.zt)} / ${num(o.dt)}`, (o.zt || 0) >= (o.dt || 0) ? "up" : "down",
+      `涨停占比 ${bpct(o.limit_up_ratio)}`],
+    ["两市成交额", amt, "", tot ? `覆盖 ${num(o.samples || tot)} 只` : "—"],
+  ];
+  g.innerHTML = cards.map(([k, v, c, sub]) =>
+    `<div class="mkt-card"><div class="k">${esc(k)}</div>
+      <div class="v ${c || ""}">${v}</div>
+      <div class="sub mut small">${esc(sub)}</div></div>`).join("");
+}
+
+function renderIntraday() {
+  const note = $("mktIntraNote");
+  const it = INTRA || {};
+  if (note) {
+    note.textContent = it.ok
+      ? `· ${esc(it.name || "")} 最新 ${it.price ?? "—"}（${fmtPct(it.chg_pct)}）`
+        + ` · 昨收 ${it.pre_close ?? "—"} · 日内高/低 ${it.high ?? "—"}/${it.low ?? "—"}`
+        + ` · 来源 ${esc(it.source || "")}`
+      : `· ${esc(it.message || "分时暂不可用")}`;
+  }
+  const el = $("chIntraday");
+  if (!el || !echartsOK() || !elVisible(el)) return;
+  if (!it.ok || !(it.points || []).length) {
+    const c = chartInit("chIntraday");
+    if (c) c.clear();
+    return;
+  }
+  const c = chartInit("chIntraday");
+  if (!c) return;
+  const pre = it.pre_close;
+  const xs = it.points.map(p => p.t);
+  const ys = it.points.map(p => p.price);
+  const up = (it.chg_pct || 0) >= 0;
+  c.setOption({
+    animation: false,
+    grid: { left: 52, right: 12, top: 16, bottom: 22 },
+    tooltip: { trigger: "axis", valueFormatter: v => Number(v).toFixed(2) },
+    xAxis: { type: "category", data: xs, axisLabel: { fontSize: 10, interval: Math.max(1, Math.floor(xs.length / 8)) } },
+    yAxis: { type: "value", scale: true, axisLabel: { fontSize: 10 },
+      splitLine: { lineStyle: { opacity: .25 } } },
+    series: [{
+      type: "line", data: ys, showSymbol: false, smooth: false,
+      lineStyle: { width: 1.6, color: up ? "#e5484d" : "#30a46c" },
+      areaStyle: { opacity: .12, color: up ? "#e5484d" : "#30a46c" },
+      markLine: pre == null ? undefined : {
+        silent: true, symbol: "none",
+        lineStyle: { type: "dashed", opacity: .6 },
+        data: [{ yAxis: pre, label: { formatter: "昨收 " + pre, fontSize: 10 } }],
+      },
+    }],
+  }, true);
+  c.resize();
+}
+
 async function loadIndices() {
   try {
     const j = await api("/api/indices");
@@ -316,7 +522,7 @@ function redrawAll() {
   if (!echartsOK()) return;
   const page = document.querySelector("nav.tabs button.on")?.dataset.tab;
   if (page === "dash") {
-    drawMain(); drawPie(); drawScore(); drawAIDir();
+    drawMain(); drawPie(); drawScore(); drawAIDir(); renderIntraday();
   } else if (page === "backtest") {
     drawBtChart();
   } else if (page === "micro") {
@@ -535,9 +741,9 @@ function drawHints() {
   else if (ST.exec_mode === "manual") lines.push("人工执行模式：每天收盘后运行一次，AI 输出“今日建议”（默认按此执行即可）；你在支付宝/天天基金操作后，到「指令与成交」页点“已执行”录入实际成交，账本才与真实资金一致。");
   else lines.push("模拟自动成交模式（仅演示）：昨日建议会自动按最新净值成交。真实资金请把 config.json 的 exec_mode 改为 manual。");
   const ap = ST.api_usage;
-  lines.push("数据通道提示：" + (ap
-    ? "今天已调用 " + ap.calls_today + " 次" + (ap.daily_limit != null ? "/" + ap.daily_limit + "（智兔）" : "（akshare/东财 免费不限）")
-    : "？") + "；日常运行只需少量调用，界面轮询只读缓存，不会烧配额。");
+  lines.push("数据通道提示：" + (ap ? quotaLong(ap) : "？")
+    + "；**只有智兔有每日 200 次上限**，东财/新浪/腾讯/akshare 都是免费公开通道、不限量；"
+    + "界面轮询只读缓存，不会烧配额。");
   const itd = ST.intraday || {};
   if (itd.summary) {
     lines.push("午间诊断（" + esc(itd.time || "") + "）：" + esc(itd.summary) +
@@ -718,10 +924,14 @@ function renderOrders() {
   tb.innerHTML = `<table><thead><tr>
     <th>建议日</th><th>基金</th><th>动作</th><th>金额/份额</th><th>执行日</th><th>净值</th><th>费用</th><th>状态</th>
   </tr></thead><tbody>` + rows.map(o => {
+    // 名称解析顺序：接口自带 → 状态接口里的全量名称映射 → 基金列表 → 代码兜底
     const fund = (FUNDS.find(f => f.code === o.fund_code) || {});
+    const nm = o.fund_name || (ST && ST.fund_names && ST.fund_names[o.fund_code])
+      || fund.name || o.fund_code;
+    const short = nm === o.fund_code ? nm : nm;
     return `<tr>
       <td>${esc(o.order_date)}</td>
-      <td>${esc(o.fund_name || fund.name || o.fund_code)}</td>
+      <td title="${esc(o.fund_code)}">${esc(short)}<span class="mut small" style="margin-left:6px">${esc(o.fund_code)}</span></td>
       <td>${o.action === "buy" ? '<span class="up">申购</span>' : '<span class="down">赎回</span>'}</td>
       <td>${fmtMoney(o.amount)}${o.fill_shares ? " → " + fmtNum(o.fill_shares, 2) + " 份" : ""}</td>
       <td>${esc(o.fill_date || "—")}</td>
@@ -1048,28 +1258,71 @@ function renderSrcAlert() {
   const today = s.today || {};
   const deg = !!s.degraded;
   const exhausted = !!today.exhausted;
-  const warn = deg || exhausted || (today.fail || 0) > 0;
+  // 告警只认「当下是否真有问题」（2026-09-16 二次修复，用户："这个就没成功过"）：
+  //   · degraded           —— **首选源确实失败过**才退到备用（首选 0 次调用不算降级）
+  //   · has_recent_trouble —— 有源"连续失败达阈值且失败是新的"，或近 15 分钟内发生过切换
+  // 三处旧逻辑都会让提示永远挂着，已全部去掉：
+  //   ① "今日失败累计>0"（早上一次抖动挂一整天）；
+  //   ② "最后一次失败晚于最后一次成功"（对**失败后再没被调用**的源永真）；
+  //   ③ "当前供货不是首选"就算降级（首选源当天 0 次调用时属空判）。
+  const recent = (s.has_recent_trouble !== undefined)
+    ? !!s.has_recent_trouble : ((today.fail || 0) > 0);
+  const warn = deg || exhausted || recent;
   panel.style.display = warn ? "" : "none";
   if (!warn) return;
   const act = Object.entries(s.active || {})
+    .filter(([k]) => k !== "probe")
     .map(([k, v]) => `${PURPOSE_LABEL[k] || k}→${SRC_LABEL[v] || v}`).join("、") || "—";
-  $("srcAlertBadge").textContent = exhausted ? "配额耗尽" : (deg ? "已降级" : "有失败");
+  const stale = (s.stale_sources || []).map(x => SRC_LABEL[x] || x).join("、");
+  const ztExhausted = !!(s.zhitu_exhausted ?? today.exhausted);
+  const ztLimit = s.zhitu_limit ?? today.limit;
+  const ztUsed = s.zhitu_today ?? (today.sources?.zhitu?.calls || 0);
+  $("srcAlertBadge").textContent = ztExhausted ? "智兔配额耗尽"
+    : (deg ? "已降级" : (stale ? "通道可疑" : "近期切换"));
   $("srcAlertBadge").className = "badge warn";
-  $("srcAlertNote").innerHTML = `今日调用 <b>${today.calls ?? 0}</b> 次`
-    + (today.limit != null ? `（上限 ${today.limit}，剩余 ${today.remaining}）` : "（无配额上限）")
-    + ` · 失败 ${today.fail ?? 0} 次 · 当前供货：${esc(act)}`
-    + (s.degraded_reason ? `<br>原因：${esc(s.degraded_reason)}` : "");
+  const win = Math.round((s.window_seconds || 3600) / 60);
+  const fwin = Math.round((s.failover_fresh_seconds || 900) / 60);
+  $("srcAlertNote").innerHTML = `智兔 <b>${ztUsed}</b>${ztLimit != null ? `/${ztLimit}（剩 ${s.zhitu_remaining ?? today.remaining}）` : "（未配 Token，不限）"}`
+    + ` · 其它通道 ${s.other_calls_today ?? Math.max(0, (today.calls ?? 0) - ztUsed)} 次（不限）`
+    + ` · 近 ${fwin} 分钟切换 ${s.fresh_failover ?? 0} 次`
+    + ` · 当前供货：${esc(act)}`
+    + (stale ? ` · <span class="warn-txt">可疑通道：${esc(stale)}</span>` : "")
+    + (s.degraded_reason ? `<br>原因：${esc(s.degraded_reason)}` : "")
+    + `<br><span class="mut small">判定口径：连续失败 ≥${s.stale_min_fails ?? 3} 次且失败在 ${Math.round((s.stale_ttl_seconds || 1800) / 60)} 分钟内才算"该源有问题"；失败超时即视为已自愈（恢复后提示自动消失）。</span>`;
   const fo = (s.failover || []).slice(0, 3);
   $("srcAlertDetail").innerHTML = fo.length ? fo.map(f =>
     `<div class="src-row"><span class="nm">${esc(f.ts?.slice(11) || "")}</span>
       <span>${esc(PURPOSE_LABEL[f.purpose] || f.purpose || "")}：${esc(SRC_LABEL[f.from] || f.from || "?")}
       → ${esc(SRC_LABEL[f.to] || f.to || "?")}</span>
       <span class="mut small">${esc((f.reason || "").slice(0, 90))}</span></div>`).join("")
-    : `<div class="mut small">今日暂无通道切换记录。</div>`;
+    : `<div class="mut small">近期无通道切换记录（恢复后提示会自动消失）。</div>`;
 }
 
-function renderSrcDetail() {
-  if (!$("srcDetail")) return;
+/* ---------- 人工介入额度（用户要求：每天一共 ≤50 次） ---------- */
+/* 这个卡片存在的意义：让"要我点几次"变成**看得见的数字**。
+   旧版把额度写死在文案里（"最多 50 条复核打标"），而打标之外还有成交回填、
+   合并搜索、重建备选池等动作全都没计数，用户根本不知道自己实际上用掉了多少。 */
+function renderBudget() {
+  if (!$("nBudget")) return;
+  const iv = (ST && ST.interventions) || null;
+  if (!iv || iv.error) {
+    $("nBudget").textContent = "—";
+    $("nBudgetSub").textContent = iv ? ("统计不可用：" + iv.error) : "全系统合计上限 50 次/天";
+    return;
+  }
+  const used = iv.used || 0, budget = iv.budget || 50;
+  $("nBudget").textContent = `${used} / ${budget}`;
+  $("nBudget").className = "v " + (iv.over ? "down" : "up");
+  const kinds = Object.entries(iv.by_kind || {}).map(([k, n]) => {
+    const lab = (iv.kinds && iv.kinds[k] && iv.kinds[k].label) || k;
+    return `${lab} ${n}`;
+  }).join(" · ");
+  $("nBudgetSub").innerHTML = `剩 ${iv.left} 次 · <b>AI 自动完成 ${iv.auto} 次</b>`
+    + (kinds ? `<br>${kinds}` : "<br>今日还没有需要你动手的动作")
+    + (iv.over ? `<br><span class="warn-txt">已超出 ${budget} 次额度，说明有动作没被自动化，请反馈</span>` : "");
+}
+
+function renderSrcDetail() {  if (!$("srcDetail")) return;
   const s = srcSnapshot();
   const today = s.today || {}, yest = s.yesterday || {};
   const srcs = today.sources || {};
@@ -1147,7 +1400,7 @@ function renderSettings() {
     <tr><td>目标倍数</td><td>${(ST.target_multiple ?? (ST.target / ST.initial)).toFixed(2)}×（在「参数开关面板 → 运行与服务」里改起始资金/倍数，保存即生效）</td></tr>
     <tr><td>观察期</td><td>${esc(ST.start)} → ${esc(ST.end)}（${esc(ST.days_left)} 天剩余）</td></tr>
     <tr><td>执行模式</td><td>${ST.exec_mode === "manual" ? "人工执行：AI 出建议 → 你亲自执行 → 录入成交" : "模拟自动成交（演示）"}</td></tr>
-    <tr><td>数据源与API配额</td><td>${esc(ST.data_source)}${ST.api_usage ? " · 今日已用 " + ST.api_usage.calls_today + " 次" + (ST.api_usage.daily_limit != null ? "/" + ST.api_usage.daily_limit + " 次" : "（智兔不限/akshare免费）") : ""}</td></tr>
+    <tr><td>数据源与API配额</td><td>${esc(ST.data_source)}${ST.api_usage ? " · " + esc(quotaLong(ST.api_usage)) : ""}</td></tr>
     <tr><td>今日</td><td>${esc(ST.today)}</td></tr>
   </tbody></table>`;
   $("setStrategy").innerHTML = `<table><tbody>
@@ -1313,6 +1566,66 @@ window.addEventListener("resize", () => {
 
 /* 每 60 秒自动刷新 */
 setInterval(() => { if (!document.hidden) loadAll(true); }, 60000);
+/* 大盘信息独立轮询（**盘中每 60 秒**，远严于"至少 15 分钟"的要求）：
+   指数条 + 大盘概览 + 今日分时走轻量接口（服务端另有 2~5 分钟缓存），
+   不拖累 60 秒一次的整页 loadAll（那条链会拉账本/持仓/记录）。
+   非交易时段自动降频到 5 分钟，避免白刷。 */
+const MKT_TICK = 60000, MKT_TICK_OFF = 300000;
+let _mktTimer = null;
+function mktLoop() {
+  if (!document.hidden) loadMarket();
+  const live = MKT && MKT.phase && SESSION_LIVE[MKT.phase];
+  const gap = live || !MKT ? MKT_TICK : MKT_TICK_OFF;
+  _mktTimer = setTimeout(mktLoop, gap);
+}
+_mktTimer = setTimeout(mktLoop, 800);
+const _btnMkt = $("btnMktRefresh");
+if (_btnMkt) {
+  _btnMkt.onclick = async () => {
+    const old = _btnMkt.textContent;
+    _btnMkt.disabled = true; _btnMkt.textContent = "统计中…";
+    try {
+      const j = await api("/api/market/overview?force=1");
+      MKT = j.overview || MKT;
+      renderMktPanel();
+      toast("大盘概览已刷新", "ok");
+    } catch (e) { toast("刷新失败：" + e.message, "err"); }
+    finally { _btnMkt.disabled = false; _btnMkt.textContent = old; }
+  };
+}
+
+const _btnMidday = $("btnMidday");
+if (_btnMidday) {
+  _btnMidday.onclick = async () => {
+    const old = _btnMidday.textContent;
+    _btnMidday.disabled = true; _btnMidday.textContent = "诊断中…";
+    try {
+      const j = await api("/api/intraday/run", { method: "POST", body: {} });
+      INTRA_MID = j.intraday || INTRA_MID;
+      renderMidday();
+      toast(j.message || "午间诊断已更新", j.ok === false ? "err" : "ok");
+    } catch (e) { toast("诊断失败：" + e.message, "err"); }
+    finally { _btnMidday.disabled = false; _btnMidday.textContent = old; }
+  };
+}
+const _btnMiddaySettle = $("btnMiddaySettle");
+if (_btnMiddaySettle) {
+  _btnMiddaySettle.onclick = async () => {
+    const old = _btnMiddaySettle.textContent;
+    _btnMiddaySettle.disabled = true; _btnMiddaySettle.textContent = "结算中…";
+    try {
+      const j = await api("/api/intraday/settle", { method: "POST", body: {} });
+      INTRA_MID = j.intraday || INTRA_MID;
+      renderMidday();
+      toast(j.message || "结算完成", j.ok === false ? "err" : "ok");
+    } catch (e) { toast("结算失败：" + e.message, "err"); }
+    finally { _btnMiddaySettle.disabled = false; _btnMiddaySettle.textContent = old; }
+  };
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadMarket();   // 切回页面立刻刷新，不等下一个周期
+});
 
 loadAll(false);
 
@@ -1365,15 +1678,23 @@ function renderNews() {
   }
   const by = NEWS.labels.by_label || {};
   const doneN = NEWS.done || 0;
-  $("nProgress").textContent = "待确认 " + (NEWS.todo || 0) + " 条 · AI 已采纳 " +
-    (NEWS.ai_accepted || 0) + " 条 · 已打标 " + doneN + " / 共 " + NEWS.feed_count + " 条";
+  // 人工额度：**一共 50 次**（用户 2026-09-16 明确要求），这里显示的是全系统当日总用量
+  // 注意变量名是 ST（`let ST = null` 存 /api/state），不是 STATE —— 写成 STATE 会
+  // 抛 ReferenceError，把整个 renderNews() 打断，表现成"消息数据加载失败"。
+  const iv = (ST && ST.interventions) || null;
+  const budgetTxt = iv && iv.budget
+    ? `人工介入 ${iv.used}/${iv.budget} 次（剩 ${iv.left}）· AI 自动完成 ${iv.auto} 次`
+    : "";
+  $("nProgress").innerHTML = "待抽检 " + (NEWS.todo || 0) + " 条 · AI 已采纳 " +
+    (NEWS.ai_accepted || 0) + " 条 · 已打标 " + doneN + " / 共 " + NEWS.feed_count + " 条" +
+    (budgetTxt ? `<div class="mut small">${budgetTxt}</div>` : "");
   const isToday = NEWS.date === todayStrLocal();
   let capNote = "";
   if (isToday && (NEWS.review_extra || 0) > 0) {
-    capNote = " · 另有 " + NEWS.review_extra + " 条中性超出 50 条人工额度，默认按 AI 中性处理";
+    capNote = " · 另有 " + NEWS.review_extra + " 条低把握度消息未列入抽检（AI 判断仍生效）";
   }
   $("nScoreNote").innerHTML = "消息权重 " + Math.round(NEWS.cfg.news_weight * 100) +
-    "% · 学习词 " + NEWS.learned_total + " 个 · " +
+    "% · 术语样本 " + NEWS.learned_total + " 个 · " +
     (NEWS.demo ? "" : NEWS.feed_count ? NEWS.feed_count + " 条已入库" : "尚未拉取") +
     (isToday ? capNote : "（非今日，只读历史）");
   renderNewsFeed();
@@ -1401,9 +1722,15 @@ function renderNewsFeed() {
     premium: "产品风险提示·AI判中性",
     disclosure: "例行持股披露·AI判中性",
     dup: "同模板批量·AI已归并",
+    // 纯指数/商品报价：不是新闻，是行情播报。已被市场实时定价，不构成利好利空，
+    // 因此整类自动归档（用户 2026-09-16：「只是单纯的消息面，根本不构成利空利好」）。
+    broadcast: "行情播报·纯报价已归档",
   };
   const shownNote = NF === "unrated" ? "（AI 没把握、待你确认）"
-    : NF === "auto" ? "（AI 已直接采纳，可展开覆盖）" : "";
+    : NF === "auto" ? "（AI 已直接采纳，可展开覆盖）"
+    : NF === "archived" ? `（例行披露/同模板/行情播报已自动归档${
+        NEWS.broadcast_archived ? "，其中行情播报 " + NEWS.broadcast_archived + " 条" : ""
+      }）` : "";
   $("nFeedCount").textContent = "共 " + NEWS.feed_count + " 条，当前显示 " + items.length +
     " 条" + shownNote;
   const box = $("nFeedList");
@@ -1777,32 +2104,50 @@ function renderNewsDir() {
     : `<div class="mut">暂无结算记录</div>`;
 }
 
-/* ---------- 学习词典 & 搜索补全 ---------- */
+/* ---------- 学习成果（术语 × 市场实际反应）与搜索补全 ---------- */
+/* 旧版把学习结果显示成「自动驾驶 利多 34 次」——那是把方向**永久钉在词上**。
+   现在展示的是：含该术语的消息**次日市场实际怎么走**（样本数 / 上涨比例 / 平均涨跌），
+   并且明确标注"方向由上下文与 AI 共同决定，不由词决定"。 */
 function renderNewsLearn() {
-  $("nLearnSub").textContent = `（${NEWS.learned_total} 个新词生效）`;
+  $("nLearnSub").textContent = `（${NEWS.learned_total} 个术语有市场反应样本）`;
   $("nBaseLex").textContent = `${NEWS.base_lexicon?.bull || 0} 利好 / ${NEWS.base_lexicon?.bear || 0} 利空`;
   const w = NEWS.learned || [];
-  $("nLearned").innerHTML = w.length ? w.map(x => {
-    const dir = x.bull > x.bear ? "up" : "down";
-    const txt = x.bull > x.bear ? "利多" : "利空";
-    const hit = x.bull + x.bear;
-    return `<span class="wlearn">${esc(x.word)}<span class="dir ${dir}">${txt} ${hit}次</span></span>`;
-  }).join("") : `<div class="mut">还没有你教会的新词。到上方给消息打标（利好/利空），几小时后自动打分就会带上这些词。</div>`;
+  if (!w.length) {
+    $("nLearned").innerHTML =
+      `<div class="mut">还没有积累出足够样本。学习口径是「术语 × 市场实际反应」：
+       含某术语的消息**次日大盘实际涨跌**，满 ${NEWS.min_samples || 5} 个样本才展示；
+       方向由 AI 与上下文（结果动词/否定转折/作用对象）共同判断，不由词单独决定。</div>`;
+    return;
+  }
+  $("nLearned").innerHTML = w.slice(0, 60).map(x => {
+    const n = x.docs || x.n || 0;
+    const hit = x.hit;
+    if (hit == null) return `<span class="wlearn">${esc(x.word)}<span class="dir">样本 ${n}</span></span>`;
+    const chg = x.chg == null ? "" : ` ${x.chg > 0 ? "+" : ""}${(x.chg).toFixed(2)}%`;
+    const cls = hit >= 0.55 ? "up" : (hit <= 0.45 ? "down" : "mut");
+    const by = x.by_regime && Object.keys(x.by_regime).length
+      ? " · " + Object.entries(x.by_regime).map(([k, v]) =>
+        `${k}${(v.hit * 100).toFixed(0)}%(${v.n})`).join(" ") : "";
+    return `<span class="wlearn">${esc(x.word)}<span class="dir ${cls}"
+      title="含该术语的消息，次日上涨比例 ${(hit * 100).toFixed(0)}%，样本 ${n}${by}">
+      次日涨 ${(hit * 100).toFixed(0)}%${chg} · ${n}样本</span></span>`;
+  }).join("");
 }
 function renderNewsQueue() {
   const open = NEWS.queue_open || [];
   const all = NEWS.queue || [];
   const last = NEWS.last_merge || {};
   $("nQueueHint").textContent =
-    "机制：在线消息不足/缺失时自动写 data/search_queue.json → 让 DSH 助手用本地搜索把结果放回 data/search_results.json → 点上方【合并搜索回填结果】（或下次运行研判自动合并）。" +
-    (NEWS.results_ready ? " 【检测到 data/search_results.json 有待合并内容】" : "");
+    "机制：在线消息不足/缺失时自动写 data/search_queue.json → 让 DSH 助手用本地搜索把结果放回 data/search_results.json → " +
+    "**系统在下次研判前自动合并，无需你点按钮**（如需立刻合并可点上方【合并搜索回填结果】）。" +
+    (NEWS.results_ready ? " 【检测到 data/search_results.json 有待合并内容，下次研判会自动合并】" : "");
   $("nQueue").innerHTML =
     `<div class="mut small">待补清单 ${open.length} 条 / 累计 ${all.length} 条` +
-    (last.run_at ? ` · 最近合并 ${esc(last.run_at || "")}：${esc(last.note || "")}` : "") + `</div>` +
+    (last.run_at ? ` · 最近自动合并 ${esc(last.run_at || "")}：${esc(last.note || "")}` : "") + `</div>` +
     (open.length ? open.map(x => `<div class="feed-item"><b>${esc(x.kind)}</b> · ${esc(x.date)}
         <div class="mut small">${esc(x.query)}</div>
         <div class="mut small">理由：${esc(x.reason)}</div></div>`).join("")
-      : `<div class="mut">当前无信息缺口；如仍想补充，可点【登记搜索补全清单】。</div>`);
+      : `<div class="mut">当前无需人工介入（没有信息缺口，也没有等你确认的事项）。</div>`);
 }
 $("btnSearchExport").onclick = async () => {
   try {

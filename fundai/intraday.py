@@ -12,16 +12,61 @@
 `engine.run_daily` 会自动 `settle()`；也可 `python app.py intraday-pulse --settle` 手动结算。
 """
 import json
+import time
 
 from . import news as newsmod, risk_overlay, screening, settings, util
 
+# 午间诊断取数的重试参数（2026-09-16：11:35 那次瞬断导致整天没有诊断）
+MIDDAY_QUOTE_ATTEMPTS = 3     # 实时行情最多试 3 次（三家通道各走一遍算 1 次）
+MIDDAY_QUOTE_GAP = 2.5        # 每次之间的间隔（秒）
 
-def _quote(cfg):
+
+def _quote(cfg, attempts=None):
+    """取基准指数实时行情；**带重试**，失败再退回"当日分时线"。
+
+    为什么必须重试（2026-09-16 用户反馈"午间自动诊断还是没有运行"）：
+    日志里 11:35:00 那次是 `午间复盘跳过：实时行情不可用（网络/接口）` ——
+    旧实现 `_quote()` **只调一次** `indices_quote()`，三家通道同时瞬断就直接放弃，
+    当天再也没有第二次机会。而实测同一台机器晚一点再跑就完全正常，
+    说明这是**瞬时网络抖动**，不是配置问题。所以：
+      1. 重试 `MIDDAY_QUOTE_ATTEMPTS` 次（间隔 `MIDDAY_QUOTE_GAP` 秒）；
+      2. 仍失败则用 `index_intraday()` 的**当日分时线**兜底：取最后一个点作为"上午收盘价"、
+         用 pre_close 算涨跌幅 —— 分时线与实时行情走的是不同接口，能覆盖前者的故障域。
+    返回 (main, quotes, source)；source ∈ live/retry/intraday/""（空 = 彻底拿不到）。
+    """
     from .datasource import Market
     mk = Market(cfg)
-    qs = mk.indices_quote(force=True) or []
-    main = next((q for q in qs if q.get("benchmark")), None) or (qs[0] if qs else None)
-    return main, qs
+    n = int(attempts if attempts is not None else MIDDAY_QUOTE_ATTEMPTS)
+    main, qs = None, []
+    for i in range(max(1, n)):
+        try:
+            qs = mk.indices_quote(force=True) or []
+        except Exception:
+            qs = []
+        main = next((q for q in qs if q.get("benchmark")), None) or (qs[0] if qs else None)
+        if main and main.get("price"):
+            return main, qs, ("live" if i == 0 else "retry")
+        if i < n - 1:
+            time.sleep(MIDDAY_QUOTE_GAP)
+    # ---- 兜底：当日分时线（不同接口，故障域不同）----
+    try:
+        d = mk.index_intraday()
+    except Exception:
+        d = None
+    if d and d.get("ok") and d.get("points"):
+        pts = d["points"]
+        last = pts[-1]
+        pre = d.get("pre_close")
+        price = float(last.get("price") or 0)
+        chg = float(d.get("chg_pct") or 0)
+        if pre and price:
+            chg = price / float(pre) - 1.0
+        main = {"code": (d.get("code") or "000300"), "name": d.get("name") or "沪深300",
+                "price": price, "chg_pct": chg, "chg_amt": None, "benchmark": True,
+                "source": "intraday"}
+        qs = [main]
+        return main, qs, "intraday"
+    return None, [], ""
 
 
 def _morning_news_score(cfg):
@@ -82,14 +127,37 @@ def _view(mid_chg, p_up, vol_rank, cfg):
     return int(round(score)), view, txt
 
 
-def run_midday(cfg=None, force=False):
-    """执行午间诊断并落库（幂等：同日重复运行覆盖）。"""
+def run_midday(cfg=None, force=False, date_s=None):
+    """执行午间诊断并落库（幂等：同日重复运行覆盖）。
+
+    ``date_s``：可指定日期（默认今天）。**只能跑当天** —— 诊断取的是实时行情，
+    回补历史日期在物理上不可能（那时的盘中价已经拿不到了），所以显式拒绝并说明，
+    而不是悄悄用"现在的价格"冒充历史。
+    ``force``：忽略当日缓存重取实时行情。
+    """
     cfg = cfg or settings.load_config()
     scr = screening.ScreeningStore()
+    if date_s and str(date_s)[:10] != util.today_str():
+        return {"ok": False,
+                "message": "午间诊断只能取实时行情，无法回补历史日期（{}）".format(
+                    str(date_s)[:10])}
     d = util.today_str()
-    main, qs = _quote(cfg)
+    main, qs, qsrc = _quote(cfg)
     if not main:
-        return {"ok": False, "message": "实时行情不可用（网络/接口），午间诊断跳过"}
+        # 取数彻底失败：**不静默**。写一条可查的失败记录（供 intraday-status 与计划任务
+        # 重试判断），并给出明确的重试指引——旧实现只返回一句"跳过"，
+        # 结果整天没人知道午间诊断根本没跑（用户 2026-09-16 反馈）。
+        msg = "实时行情不可用（{} 次尝试 + 分时线兜底都失败）".format(
+            MIDDAY_QUOTE_ATTEMPTS)
+        try:
+            util.save_json(util.data_file("intraday_last_error.json"),
+                           {"date": d, "time": util.now_dt().strftime("%H:%M"),
+                            "message": msg, "updated": util.now_iso()})
+        except Exception:
+            pass
+        return {"ok": False, "date": d, "retry_able": True,
+                "message": msg + "，午间诊断未执行；计划任务会在 11:40/11:45 自动重试，"
+                                 "也可手动 python app.py intraday-pulse"}
     mid_price = float(main.get("price") or 0)
     mid_chg = float(main.get("chg_pct") or 0)
     others = [{"name": q.get("name"), "chg": round(float(q.get("chg_pct") or 0), 4)}
@@ -130,8 +198,16 @@ def run_midday(cfg=None, force=False):
                                    "vol_rank": vol_rank},
                                   ensure_ascii=False)}
     scr.intraday_upsert(row)
+    # 成功即清掉上一次的失败记录，避免状态面板一直显示旧错误
+    try:
+        p = util.data_file("intraday_last_error.json")
+        from pathlib import Path
+        if Path(p).exists():
+            Path(p).unlink()
+    except Exception:
+        pass
     return {"ok": True, "date": d, "mid_chg": mid_chg, "view": view,
-            "summary": summary, "row": row}
+            "summary": summary, "row": row, "quote_source": qsrc}
 
 
 def settle(date_s=None, cfg=None):
@@ -160,3 +236,74 @@ def settle(date_s=None, cfg=None):
 
 def stats(limit=60):
     return screening.ScreeningStore().intraday_stats(limit)
+
+
+VIEW_TEXT = {"bull": "偏强（下午倾向修复/走强）",
+             "bear": "偏弱（下午倾向继续走弱）",
+             "neutral": "震荡（下午大概率维持震荡）"}
+
+
+def status(days=14):
+    """午间诊断状态：{ok, today, stats, history, phase_ok, hint}
+
+    给界面/计划任务读的**只读**视图（不触发任何在线请求）：
+      * `today`：今日是否已诊断、观点、原文、结算结果；
+      * `stats`：累计自检命中率（结算样本）；
+      * `history`：最近 N 天（供界面做时间线）；
+      * `phase_ok`：现在是否"适合跑诊断"（上午收盘后到收盘前为 True）。
+    """
+    scr = screening.ScreeningStore()
+    st = scr.intraday_stats(int(days))
+    today = util.today_str()
+    cur = scr.intraday_get(today)
+    phase = None
+    try:
+        from .datasource import _session_phase
+        phase = _session_phase()
+    except Exception:
+        phase = None
+    phase_ok = phase in ("noon", "pm", "closed")
+    hist = []
+    for h in (st.get("history") or []):
+        hist.append({"date": h.get("date"), "time": h.get("time"),
+                     "view": h.get("dir_view"), "summary": h.get("summary"),
+                     "mid_chg": h.get("mid_chg"), "pm_chg": h.get("pm_chg"),
+                     "hit": h.get("hit")})
+    # 最近一次执行失败的原因（今天失败才透出）：让界面能说清"是没跑还是跑失败了"。
+    # 旧的失败路径只返回一句话、什么都没留下，用户只能看到"今日还没有午间复盘"。
+    last_error = None
+    try:
+        from pathlib import Path
+        p = Path(util.data_file("intraday_last_error.json"))
+        if p.exists():
+            err = util.load_json(p, {}) or {}
+            if str(err.get("date") or "") == today:
+                last_error = "{} {}".format(err.get("time") or "",
+                                            err.get("message") or "").strip()
+    except Exception:
+        last_error = None
+    return {
+        "ok": True,
+        "date": today,
+        "phase": phase,
+        "phase_ok": phase_ok,
+        "last_error": last_error,
+        "today": {
+            "date": today,
+            "time": (cur or {}).get("time"),
+            "dir_view": (cur or {}).get("dir_view"),
+            "view_text": VIEW_TEXT.get((cur or {}).get("dir_view"), ""),
+            "summary": (cur or {}).get("summary"),
+            "mid_chg": (cur or {}).get("mid_chg"),
+            "pm_chg": (cur or {}).get("pm_chg"),
+            "hit": (cur or {}).get("hit"),
+            "resolved": bool((cur or {}).get("resolved")),
+        } if cur else {},
+        "mid_chg": (cur or {}).get("mid_chg"),
+        "view_text": VIEW_TEXT.get((cur or {}).get("dir_view"), ""),
+        "stats": {"total": st.get("total"), "hit": st.get("hit"),
+                  "hit_rate": st.get("hit_rate"), "by_view": st.get("by_view")},
+        "history": hist,
+        "hint": ("现在适合跑诊断（上午已收盘）" if phase_ok
+                 else "现在是非交易时段/盘中前段：诊断仍可跑，但行情取最近一次为准"),
+    }

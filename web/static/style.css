@@ -115,6 +115,19 @@ main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
 @media (max-width: 1000px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
 .chart { width: 100%; height: 320px; }
 .chart.sm { height: 260px; }
+.chart.xs { height: 170px; }
+
+/* 大盘概览卡片（主界面）：涨跌家数 / 涨跌停 / 成交额 / 交易时段 */
+.mkt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.mkt-card { background: var(--panel2); border: 1px solid var(--line, #2a2f3a);
+  border-radius: 10px; padding: 10px 12px; }
+.mkt-card .k { font-size: 12px; color: var(--mut, #8b93a1); margin-bottom: 4px; }
+.mkt-card .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mkt-card .v.up { color: var(--red, #e5484d); }
+.mkt-card .v.down { color: var(--green, #30a46c); }
+.mkt-card .v.live { color: var(--gold, #e2b73c); font-size: 17px; }
+.mkt-card .v.warn { color: var(--mut, #8b93a1); font-size: 17px; }
+.mkt-card .sub { margin-top: 2px; }
 
 .progress { background: var(--panel2); border-radius: 8px; height: 12px; position: relative; margin: 8px 0 4px; }
 .progress .fill { height: 100%; border-radius: 8px; background: linear-gradient(90deg, var(--blue), var(--cyan));
@@ -201,6 +214,21 @@ table thead th { letter-spacing: .4px; text-transform: uppercase; font-size: 12p
 .wlearn .dir { font-weight: 600; margin-left: 4px; }
 .wlearn .dir.up { color: var(--red); }
 .wlearn .dir.down { color: var(--green); }
+
+/* ---------- 午间复盘 hero（放在仪表盘最顶部，2026-09-16） ---------- */
+/* 为什么做成 hero：它回答"下午怎么办"，比大盘概览更该先被看到。
+   旧版只是普通面板且**元素根本没写进 HTML**，等于不存在。 */
+.midday-hero { border-left: 3px solid var(--ac1, #22d3ee); }
+.midday-hero .hero-row { display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 6px; }
+.midday-hero .hero-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.midday-hero .hero-right { margin-left: auto; display: flex; gap: 8px; }
+.midday-hero .hero-tag { font-weight: 700; font-size: 15px; letter-spacing: .5px; }
+.midday-hero .hero-view { font-weight: 600; font-size: 15px;
+  color: var(--gold, #ffc857); }
+.midday-hero .hero-meta { font-size: 12px; color: var(--mut, #8d99ae);
+  line-height: 1.9; margin-bottom: 4px; }
+.midday-hero .hero-body { font-size: 13px; line-height: 1.9; }
 
 /* =====================================================================
    渐变 · 高科技风主题（覆盖层：只改视觉，不动布局）
@@ -368,3 +396,52 @@ input[type="date"], select, textarea {
   background: rgba(12,18,40,.85) !important; border-color: rgba(120,150,255,.25) !important;
   color: #dce7ff !important;
 }
+
+/* ===== 参数开关面板（configedit / param_docs 面板） ===== */
+.toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px; margin: 6px 0 14px; }
+.sw { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel2);
+  cursor: pointer; transition: border-color .15s, background .15s; }
+.sw:hover { border-color: rgba(78,156,255,.5); }
+.sw.on { border-color: rgba(247,183,49,.65); background: rgba(247,183,49,.07); }
+.sw .track { flex: 0 0 38px; height: 20px; border-radius: 12px; background: #2a3550;
+  position: relative; margin-top: 2px; transition: background .15s; }
+.sw .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #7c8aa5; transition: transform .15s, background .15s; }
+.sw.on .track { background: rgba(247,183,49,.35); }
+.sw.on .track::after { transform: translateX(18px); background: var(--gold); }
+.sw .txt { min-width: 0; }
+.sw .txt b { display: block; font-size: 13px; font-weight: 600; }
+.sw .txt span { display: block; color: var(--mut); font-size: 11px; line-height: 1.45;
+  margin-top: 2px; }
+.pgroup { border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; overflow: hidden; }
+.pgroup > summary { cursor: pointer; padding: 9px 12px; font-weight: 600; font-size: 13.5px;
+  background: var(--panel2); list-style: none; display: flex; align-items: center; gap: 8px; }
+.pgroup > summary::-webkit-details-marker { display: none; }
+.pgroup > summary:hover { color: var(--gold); }
+.prow { display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 12px;
+  padding: 9px 12px; border-top: 1px solid rgba(36,48,74,.7); align-items: start; }
+.prow.dirty { background: rgba(247,183,49,.06); }
+.prow .pname { font-size: 13px; }
+.prow .pname code { color: var(--mut); font-size: 11px; display: block; margin-top: 2px; }
+.prow .pctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prow .pctl input[type=range] { flex: 1 1 160px; min-width: 120px; accent-color: var(--gold); }
+.prow .pctl input[type=number], .prow .pctl input[type=text], .prow .pctl select {
+  background: #0e1524; color: var(--txt); border: 1px solid var(--line);
+  border-radius: 7px; padding: 4px 8px; font-size: 12.5px; min-width: 90px; }
+.prow .pdesc { color: var(--mut); font-size: 11.5px; line-height: 1.55; margin-top: 4px;
+  grid-column: 1 / -1; }
+.prow .pdesc .eff { color: #b9a26a; }
+.prow .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.prow .opts label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+  color: var(--mut); }
+.prow.dead { opacity: .62; }
+.prow .rst { cursor: pointer; font-size: 11px; color: var(--blue); }
+.src-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 0;
+  border-bottom: 1px dashed rgba(36,48,74,.7); font-size: 12.5px; }
+.src-row .nm { min-width: 92px; font-weight: 600; }
+.src-row .bar { flex: 1 1 120px; height: 8px; border-radius: 6px; background: #232e47;
+  overflow: hidden; }
+.src-row .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#4e9cff,#38d9d0); }
+.src-row .bar.bad > i { background: linear-gradient(90deg,#ff4d4f,#f7b731); }

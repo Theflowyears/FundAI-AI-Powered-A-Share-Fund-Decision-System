@@ -138,10 +138,157 @@ def termness(word):
     return bool(word) and word in FIN_TERMS
 
 
+# ================= 学习用：**只扫完整术语**，不再枚举 n-gram =================
+# 为什么彻底换掉（2026-09-15 用户反馈“打标特别慢、词典学习逻辑不对”）：
+#   旧实现 `token_candidates()` 对每篇消息枚举**全部 2~6 字滑窗**，一篇 100 字的消息
+#   就是上千个候选、上千次 `any(c in _STOP_CHARS ...)` 判断；1000+ 条已打标消息 →
+#   几百万次循环，而且每次点一下打标都**同步**重跑一遍（`rate_item` → `learn_all`），
+#   于是“打标慢到没法用”。
+#   更根本的是**逻辑**：滑窗天然会产生“基金二级市场”“盘时基金份额参”这类碎片，
+#   靠后置白名单过滤只能事后再删——不如一开始就**只去文本里找白名单里的完整术语**。
+#   Aho-Corasick 自动机把“找词”做成一趟线性扫描（与文本长度成正比、与词表大小无关），
+#   1000 条消息从“几十秒”降到“几十毫秒”，且候选词 100% 是完整术语。
+
+_FIN_AUTOMATON = None
+
+
+def _build_automaton():
+    """为 FIN_TERMS 建 Aho-Corasick 自动机（进程内缓存一次）。
+
+    返回 (goto, fail, out)：goto[state][char] → state；
+    out[state] = 在该状态结束的词长列表（用于取最长匹配）。
+    """
+    global _FIN_AUTOMATON
+    if _FIN_AUTOMATON is not None:
+        return _FIN_AUTOMATON
+    goto = [{}]
+    fail = [0]
+    out = [[]]
+    for term in FIN_TERMS:                      # 已按长度倒序，便于“最长优先”
+        state = 0
+        for ch in term:
+            nxt = goto[state].get(ch)
+            if nxt is None:
+                goto.append({})
+                fail.append(0)
+                out.append([])
+                nxt = len(goto) - 1
+                goto[state][ch] = nxt
+            state = nxt
+        out[state].append(len(term))
+    # BFS 建失败指针（真正跑起来必须要有，否则退化成逐位置回溯）
+    from collections import deque
+    q = deque()
+    for ch, nxt in goto[0].items():
+        fail[nxt] = 0
+        q.append(nxt)
+    while q:
+        cur = q.popleft()
+        for ch, nxt in goto[cur].items():
+            f = fail[cur]
+            while f and ch not in goto[f]:
+                f = fail[f]
+            fail[nxt] = goto[f].get(ch, 0) if goto[f].get(ch, 0) != nxt else 0
+            out[nxt] = out[nxt] + out[fail[nxt]]
+            q.append(nxt)
+    _FIN_AUTOMATON = (goto, fail, out)
+    return _FIN_AUTOMATON
+
+
+def scan_terms(txt):
+    """一趟扫出文本里出现的**完整金融术语**（最长匹配优先，去重叠）。
+
+    与 `token_candidates` 的区别：这里**不生成任何非白名单词**，
+    所以不会出现“滑窗碎片当成学到的词”这种问题。
+    重叠用经典最长匹配处理：记录当前匹配的结束下标与词长，新匹配若与之重叠
+    只有**更长**才替换；一旦走出其范围就结算 —— 于是“基金二级市场”只留下
+    “二级市场”，不会同时留下“基金”（实测踩到过这点）。
+    返回按出现顺序去重的词列表。
+    """
+    if not txt:
+        return []
+    goto, fail, out = _build_automaton()
+    found = []
+    state = 0
+    i = 0
+    n = len(txt)
+    cur_end, cur_len = None, 0
+
+    def _flush():
+        if cur_end is not None and cur_len > 0:
+            w = txt[cur_end - cur_len + 1:cur_end + 1]
+            if w and w not in found:
+                found.append(w)
+
+    while i < n:
+        ch = txt[i]
+        while state and ch not in goto[state]:
+            state = fail[state]
+        state = goto[state].get(ch, 0)
+        if out[state]:
+            length = max(out[state])
+            if cur_end is not None and i - length + 1 <= cur_end:
+                if length > cur_len:                 # 重叠：只留更长的那一个
+                    cur_end, cur_len = i, length
+            else:
+                _flush()
+                cur_end, cur_len = i, length
+        elif cur_end is not None and i > cur_end:
+            _flush()                                 # 走出范围 → 结算
+            cur_end, cur_len = None, 0
+        i += 1
+    _flush()
+    return found
+
+
+def token_candidates(txt):
+    """**已弃用**：旧的白名单过滤版 n-gram 枚举（保留仅为兼容旧调用/回归对比）。
+
+    新代码请用 `scan_terms(txt)` —— 只扫完整术语、快几个数量级，
+    且不会产生“滑窗碎片”。见文件里 `scan_terms` 上方的事故说明。
+    """
+    out = []
+    for run in _HANZI.findall(txt or ""):
+        n = len(run)
+        for size in range(2, min(7, n) + 1):
+            for i in range(0, n - size + 1):
+                w = run[i:i + size]
+                if any(c in _STOP_CHARS for c in w):
+                    continue
+                if w in _STOP_WORDS or w in out:
+                    continue
+                if w.isdigit():
+                    continue
+                out.append(w)
+    return out
+
+
 def denied(kw, txt, i):
     """判断 txt 中位于 i 处的关键词 kw 是否被否定修饰（前文含否定字）。"""
     window = txt[max(0, i - 6):i]
     return any(n in window for n in NEG_UNITS)
+
+
+def signed_strength(label, strength):
+    """把（标签, 强度）折算成**带符号**贡献：label 定方向，strength 视为强度。
+
+    为什么需要（2026-09-11 修 BUG）：本项目历史上并存两种口径——
+      * `semantics.infer_news()` 返回 `label=方向 + strength=正强度`（如 bear/4）；
+      * `lexicon.score_text()` 返回 `strength=带符号`（如 bear/-3）。
+    旧 `news.net_score` 直接 `raw += auto_strength`，于是**事件型利空被算成利多**：
+    口径内 79,327 条消息（cbank_tight / geo_conflict / holder_flow 空头侧）强度全为正，
+    十年 3674 天净情绪**从未出现负值**，消息分系统性只能看多。
+    十年实测（`data/news_direction_study.py`）：按 label 取符号后，负值天数 0→1233、
+    日级 Spearman −0.008→+0.048、净情绪最高 20% 的次日上涨率 50.5%→55.9%。
+
+    中性/无关标签一律返回 0（不贡献方向）。
+    """
+    mag = abs(float(strength or 0))
+    if label in ("bull", "big_bull"):
+        return mag
+    if label in ("bear", "big_bear"):
+        return -mag
+    return 0.0
 
 
 def count_kw(txt, kws, strength):
@@ -204,28 +351,6 @@ def score_text(txt, extra=None):
         label = "neutral"
     return {"bull": bs, "bear": be, "net": net, "relevance": True,
             "label": label, "strength": max(-6, min(6, net))}
-
-
-def token_candidates(txt):
-    """从一段中文文本提取候选学习词（2~6 字 n-gram，含停用字/碎词的丢弃）。
-
-    返回去重后的词列表。只在 screening 学习时使用。
-    """
-    out = []
-    for run in _HANZI.findall(txt or ""):
-        n = len(run)
-        for size in range(2, min(7, n) + 1):
-            for i in range(0, n - size + 1):
-                w = run[i:i + size]
-                if any(c in _STOP_CHARS for c in w):
-                    continue
-                if w in _STOP_WORDS or w in out:
-                    continue
-                # 太通用的“一/二/…”数字串也不学
-                if w.isdigit():
-                    continue
-                out.append(w)
-    return out
 
 
 def is_base_word(w):

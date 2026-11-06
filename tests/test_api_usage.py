@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -328,12 +329,64 @@ class MarketZhituCountingTest(_IsolatedUsageFile):
         self.assertEqual(seq[-1], ("2026-09-10", 1.0))
         usage = m.usage()
         self.assertEqual(usage["active"].get("nav"), "zhitu")
+        # degraded = **状态判定**："首选源确实失败过、所以现在是备用源供货"（一次也算，
+        # 它是事实描述，供排查用）。旧实现只要"当前供货 ≠ 首选"就算降级，
+        # 于是首选源当天 0 次调用时会产生**空判**（用户反馈的"这个就没成功过"）。
         self.assertTrue(usage["degraded"])
         self.assertEqual((usage["failover"][0]["from"],
                           usage["failover"][0]["to"]), ("akshare", "zhitu"))
         self.assertEqual(usage["sources"]["zhitu"]["ok"], 1)
         # 原有 warnings 行为不变（其它模块在用）
         self.assertTrue(any("akshare" in w for w in m.warnings))
+
+    def test_fresh_degradation_raises_alert_once(self):
+        """**刚发生**的降级应当告警（说明现在正走备用通道，值得看一眼）。"""
+        m = self._market()
+        m.akshare_on = True
+        with mock.patch.object(Market, "_ak_nav_items",
+                               side_effect=util.DataError("AKShare 瞬时失败(1/4)")):
+            with mock.patch.object(util, "http_get_json",
+                                   return_value=[{"jzrq": "2026-09-10", "dwjz": "1.0"}]):
+                m.fund_history("000001", force_live=True)
+        snap = m.usage_snapshot()
+        self.assertTrue(snap["degraded"])
+        self.assertTrue(snap["has_recent_trouble"],
+                        "降级刚发生 → 应告警：trouble={}".format(
+                            snap.get("trouble_reason")))
+
+    def test_stale_degradation_does_not_keep_alerting(self):
+        """**陈旧**降级不再告警——这是"降级提示永不消失"的根治点。
+
+        真实场景：早上 11:35 新浪/腾讯都超时 → 落到东财供货；之后几十次调用全部成功，
+        但 `active.quote` 一整天都停在东财。旧实现因此把「已降级」提示挂到收盘，
+        用户反馈"这个就没成功过"。现在：降级事实仍如实记录（degraded + 原因，供排查），
+        但**告警**要求降级是最近 RECENT_FAIL_WINDOW 内发生的。
+        """
+        m = self._market()
+        m.akshare_on = True
+        with mock.patch.object(Market, "_ak_nav_items",
+                               side_effect=util.DataError("AKShare 瞬时失败(1/4)")):
+            with mock.patch.object(util, "http_get_json",
+                                   return_value=[{"jzrq": "2026-09-10", "dwjz": "1.0"}]):
+                m.fund_history("000001", force_live=True)
+        # 把那唯一一条 failover 记录的时间改成 3 小时前（模拟"很久以前降级过"）
+        # 注意：**不能**调用 au.reset()——它会把整个用量文件删掉，
+        # 连 active / failover 一起清空，模拟就失去意义了。
+        old = time.strftime("%Y-%m-%dT%H:%M:%S",
+                            time.localtime(time.time() - 10800))
+        p = au._default_file()
+        data = json.loads(open(p, encoding="utf-8").read())
+        self.assertTrue(data.get("failover"), "前置条件：应有 failover 记录")
+        for it in (data.get("failover") or []):
+            it["ts"] = old
+        open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False))
+        snap = m.usage_snapshot()
+        self.assertTrue(snap["degraded"], "降级事实仍要如实记录，供排查")
+        self.assertGreater(snap.get("degraded_age_seconds") or 0, 3600,
+                           "应能算出降级已发生多久")
+        self.assertFalse(snap["has_recent_trouble"],
+                         "陈旧降级不该继续告警：trouble={}".format(
+                             snap.get("trouble_reason")))
 
     def test_snapshot_present_in_usage_and_market_helper(self):
         """_zt_get 返回空列表也算一次「已尝试」（旧实现只在成功返回后才计数）。"""
@@ -353,11 +406,33 @@ class MarketZhituCountingTest(_IsolatedUsageFile):
 
     def test_degraded_when_index_kline_falls_back(self):
         m = self._market()
-        # index_kline 链首选 zhitu，实际由 eastmoney 供货 → 必须判为降级
+        # index_kline 链首选 zhitu；制造"首选真的失败过"再让 eastmoney 供货
+        m._note("zhitu", ok=False, error="zhitu 波动率接口超时", purpose="index_kline")
         m._note("eastmoney", ok=True, purpose="index_kline")
         usage = m.usage()
         self.assertTrue(usage["degraded"])
         self.assertIn("指数K线", usage["degraded_reason"])
+
+    def test_empty_degradation_is_not_reported(self):
+        """首选源当天 0 次调用时，不该被写成"已降级：非首选 X"（空判）。
+
+        真实案例（用户 2026-09-16 反馈"这个就没成功过"）：界面写的是
+        「基金净值 已降级：当前由 eastmoney 供货，非首选 akshare」，
+        而 akshare 当天调用数 = 0 —— 它从没被真正试过，这个"降级"是编出来的。
+
+        **必须钉住预期链**：`_nav_chain_effective()` 会看本机池内净值缓存是否
+        "暖"来决定首选是 zhitu 还是 eastmoney，于是不钉的话这条用例的结论
+        取决于跑它的那台机器缓存了多少净值——新克隆（没有 data/pool_state.json、
+        没有缓存）会走到另一条链而失败。这里把它固定成"首选 zhitu、备用 eastmoney"，
+        用例只验证判定逻辑，不验证本机缓存状态。
+        """
+        m = self._market()
+        with mock.patch.object(Market, "_nav_chain_effective",
+                               return_value=("zhitu", "eastmoney")):
+            m._note("eastmoney", ok=True, purpose="nav")
+            usage = m.usage()
+        self.assertFalse(usage["degraded"], "首选源没失败过 → 不算降级")
+        self.assertIn("非故障降级", usage["degraded_reason"] or "")
 
 
 class EastmoneyPaginationCountingTest(_IsolatedUsageFile):
@@ -446,8 +521,43 @@ class QuoteChainCountingTest(_IsolatedUsageFile):
         self.assertEqual(usage["sources"]["sina"]["fail"], 1)
         self.assertEqual(usage["sources"]["tencent"]["fail"], 1)
         self.assertEqual(usage["active"]["quote"], "eastmoney")
-        # 链上东财是首选 → 不算降级
-        self.assertFalse(usage["degraded"])
+        # 行情的实际通道顺序是「新浪 → 腾讯 → 东财」，前两家都失败了才轮到东财，
+        # 所以此刻**确实处于降级**（与 CHAIN_DEFAULT.quote 一致）。
+        self.assertTrue(usage["degraded"], "前两家失败、由东财兜底时应判为降级")
+        self.assertIn("eastmoney", usage["degraded_reason"] or "")
+
+    def test_degraded_clears_after_primary_recovers(self):
+        """关键回归：主通道恢复后，"已降级"必须自动消失（用户反馈"提示不消失"的根因）。"""
+        m = Market(self.CFG)
+        good = json.dumps({"data": {"diff": [
+            {"f12": "000300", "f14": "沪深300", "f2": 4500.0,
+             "f3": 1.25, "f4": 55.0}]}}).encode("gb18030")
+
+        def _sina_down(url, headers=None, timeout=12, tries=2):
+            if "hq.sinajs.cn" in url:
+                return b"<html>blocked</html>"
+            if "gtimg" in url:                      # 腾讯也不可用
+                return b"<html>blocked</html>"
+            return good                             # 东财兜底成功
+
+        with mock.patch.object(util, "http_get", side_effect=_sina_down):
+            m.indices_quote(force=True)
+        self.assertTrue(m.usage()["degraded"], "主通道失败时应显示降级")
+
+        def _all_ok(url, headers=None, timeout=12, tries=2):
+            if "hq.sinajs.cn" in url:
+                # 新浪精简行情行：var hq_str_s_sh000300="名称,现价,涨跌额,涨跌幅,..."
+                return ('var hq_str_s_sh000300="沪深300,4500.00,27.00,0.60,0,0";'
+                        ).encode("gb18030")
+            return good
+
+        with mock.patch.object(util, "http_get", side_effect=_all_ok):
+            m.indices_quote(force=True)
+        usage = m.usage()
+        self.assertEqual(usage["active"]["quote"], "sina")
+        self.assertFalse(usage["degraded"],
+                         "新浪恢复供货后不应再报降级：{}".format(
+                             usage.get("degraded_reason")))
 
 
 class PartialCacheReadTest(_IsolatedUsageFile):

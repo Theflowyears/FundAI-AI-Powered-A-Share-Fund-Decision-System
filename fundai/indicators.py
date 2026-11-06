@@ -2,6 +2,44 @@
 """技术指标（纯函数，仅依赖标准库 math）。"""
 
 
+def ma_align_state(closes):
+    """均线多头排列：收盘 > MA20 > MA60 > MA200 → 1，否则 0（数据不足返回 None）。"""
+    n = len(closes)
+    if n < 200:
+        return None
+    c = closes[-1]
+    ma20 = sum(closes[-20:]) / 20.0
+    ma60 = sum(closes[-60:]) / 60.0
+    ma200 = sum(closes[-200:]) / 200.0
+    return 1.0 if (c > ma20 > ma60 > ma200) else 0.0
+
+
+def vol_rank(closes, window=250, lookback=20):
+    """当前 20 日波动率在过去 window 日中的分位（0~1）。数据不足返回 None。
+
+    供动态权重与风险过滤判断“是否处在极端波动”使用（有界、可复现、不依赖外部库）。
+    """
+    n = len(closes)
+    if n < lookback + 10:
+        return None
+
+    def vol_at(end):
+        seg = [closes[i] / closes[i - 1] - 1.0
+               for i in range(end - lookback + 1, end + 1)]
+        m = sum(seg) / len(seg)
+        return (sum((x - m) ** 2 for x in seg) / len(seg)) ** 0.5
+    cur = vol_at(n - 1)
+    hist = []
+    for end in range(max(lookback, n - window), n):
+        try:
+            hist.append(vol_at(end))
+        except (IndexError, ZeroDivisionError):
+            continue
+    if not hist:
+        return None
+    return sum(1 for v in hist if v <= cur) / float(len(hist))
+
+
 def ma(vals, n):
     if len(vals) < n:
         return None
